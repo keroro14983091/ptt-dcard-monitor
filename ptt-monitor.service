@@ -1,0 +1,15 @@
+[Unit]
+Description=PTT and Dcard Keyword Telegram Monitor Service
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/ptt-dcard-monitor
+ExecStart=/home/ubuntu/ptt-dcard-monitor/venv/bin/python main.py
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

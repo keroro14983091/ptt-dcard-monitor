@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: ptt-dcard-telegram-monitor
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: PTT_BOARDS
+        value: Stock,Lifeismoney,Gossiping
+      - key: DCARD_BOARDS
+        value: stock,tech_job
+      - key: DEFAULT_KEYWORDS
+        value: 台積電,美股,優惠,買一送一,分紅
+      - key: PTT_MIN_PUSH_COUNT
+        value: 50
+      - key: DCARD_MIN_LIKE_COUNT
+        value: 50
+      - key: POLL_INTERVAL_MIN_SEC
+        value: 30
+      - key: POLL_INTERVAL_MAX_SEC
+        value: 60
+      - key: DB_PATH
+        value: ./data/monitor.db
+      - key: LOG_LEVEL
+        value: INFO

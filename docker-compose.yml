@@ -1,0 +1,9 @@
+services:
+  ptt-monitor:
+    build: .
+    container_name: ptt_dcard_monitor
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
