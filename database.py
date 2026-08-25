@@ -2,9 +2,28 @@ import os
 import sqlite3
 import logging
 from contextlib import contextmanager
-from typing import List, Dict, Any, Optional, Generator
+from typing import List, Dict, Any, Optional, Generator, Tuple
 from datetime import datetime, timedelta
 from config import config, logger
+
+
+def canonicalize_board_name(board: str) -> str:
+    """標準化常見 PTT 看板大小寫，其餘保持原樣"""
+    b = board.strip()
+    mapping = {
+        "stock": "Stock",
+        "lifeismoney": "Lifeismoney",
+        "gossiping": "Gossiping",
+        "c_chat": "C_Chat",
+        "tech_job": "Tech_Job",
+        "mobilecomm": "MobileComm",
+        "nba": "NBA",
+        "car": "car",
+        "pc_shopping": "PC_Shopping",
+        "e-shopping": "e-shopping",
+        "hardwaredeal": "HardwareSale",
+    }
+    return mapping.get(b.lower(), b)
 
 
 @contextmanager
@@ -29,28 +48,50 @@ def get_db_cursor(db_path: Optional[str] = None) -> Generator[sqlite3.Cursor, No
         conn.close()
 
 
-def init_db(db_path: Optional[str] = None, default_keywords: Optional[List[str]] = None) -> None:
+def init_db(db_path: Optional[str] = None) -> None:
     """
     初始化 SQLite 資料表：
-    1. keywords (keyword TEXT PRIMARY KEY, created_at TIMESTAMP)
-    2. notified_posts (platform, post_id, title, url, board, reason, created_at)
-    若 keywords 為空，自動寫入預設關鍵字。
-    自動相容舊版資料表結構與欄位遷移。
+    1. board_keywords (board TEXT, keyword TEXT, created_at TIMESTAMP, PRIMARY KEY(board, keyword))
+    2. board_settings (board TEXT PRIMARY KEY, min_push_count INTEGER DEFAULT 0, created_at TIMESTAMP)
+    3. system_settings (key TEXT PRIMARY KEY, value TEXT)
+    4. notified_posts (platform, post_id, title, url, board, reason, created_at)
+    5. keywords (舊版相容)
     """
-    defaults = default_keywords if default_keywords is not None else config.default_keywords
-
     with get_db_cursor(db_path) as cursor:
-        # 1. 建立 keywords 資料表
+        # 1. 建立 board_keywords 資料表
         cursor.execute(
             """
-            CREATE TABLE IF NOT EXISTS keywords (
-                keyword TEXT PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS board_keywords (
+                board TEXT NOT NULL,
+                keyword TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (board, keyword)
+            );
+            """
+        )
+
+        # 2. 建立 board_settings 資料表
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS board_settings (
+                board TEXT PRIMARY KEY,
+                min_push_count INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             """
         )
 
-        # 2. 建立 notified_posts 資料表
+        # 3. 建立 system_settings 資料表
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS system_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            );
+            """
+        )
+
+        # 4. 建立 notified_posts 資料表
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS notified_posts (
@@ -66,18 +107,15 @@ def init_db(db_path: Optional[str] = None, default_keywords: Optional[List[str]]
             """
         )
 
-        # 3. 檢查現有欄位並進行自動擴充/補齊 (相容舊版 DB)
-        cursor.execute("PRAGMA table_info(notified_posts);")
-        existing_cols = {row["name"] for row in cursor.fetchall()}
-
-        if "reason" not in existing_cols:
-            cursor.execute("ALTER TABLE notified_posts ADD COLUMN reason TEXT;")
-        if "title" not in existing_cols:
-            cursor.execute("ALTER TABLE notified_posts ADD COLUMN title TEXT;")
-        if "url" not in existing_cols:
-            cursor.execute("ALTER TABLE notified_posts ADD COLUMN url TEXT;")
-        if "board" not in existing_cols:
-            cursor.execute("ALTER TABLE notified_posts ADD COLUMN board TEXT;")
+        # 5. 舊版相容 keywords
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS keywords (
+                keyword TEXT PRIMARY KEY,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
 
         # 建立快速查詢索引
         cursor.execute(
@@ -86,58 +124,185 @@ def init_db(db_path: Optional[str] = None, default_keywords: Optional[List[str]]
             ON notified_posts (platform, post_id);
             """
         )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_board_kw_lookup 
+            ON board_keywords (board);
+            """
+        )
 
-        # 4. 檢查是否需要匯入預設關鍵字
-        cursor.execute("SELECT COUNT(*) AS cnt FROM keywords;")
-        count = cursor.fetchone()["cnt"]
+        # 6. 初始化預設看板與規則 (若 board_keywords 與 board_settings 皆為空)
+        cursor.execute("SELECT COUNT(*) AS cnt FROM board_keywords;")
+        bk_count = cursor.fetchone()["cnt"]
+        cursor.execute("SELECT COUNT(*) AS cnt FROM board_settings;")
+        bs_count = cursor.fetchone()["cnt"]
 
-        if count == 0 and defaults:
-            logger.info(f"關鍵字資料表為空，寫入預設關鍵字: {defaults}")
-            for kw in defaults:
-                kw_clean = kw.strip()
-                if kw_clean:
+        if bk_count == 0 and bs_count == 0:
+            logger.info("看板規則資料表為空，初始化預設看板監控規則...")
+            default_rules = [
+                ("Stock", ["台積電", "美股", "分紅"], 50),
+                ("Lifeismoney", ["優惠", "買一送一", "抽獎"], 50),
+                ("Gossiping", [], 80),
+            ]
+            for b_name, kws, push_th in default_rules:
+                for kw in kws:
                     cursor.execute(
-                        "INSERT OR IGNORE INTO keywords (keyword, created_at) VALUES (?, CURRENT_TIMESTAMP);",
-                        (kw_clean,),
+                        "INSERT OR IGNORE INTO board_keywords (board, keyword) VALUES (?, ?);",
+                        (b_name, kw),
+                    )
+                if push_th > 0:
+                    cursor.execute(
+                        "INSERT OR REPLACE INTO board_settings (board, min_push_count) VALUES (?, ?);",
+                        (b_name, push_th),
                     )
 
 
-def add_keyword(keyword: str, db_path: Optional[str] = None) -> bool:
-    """新增關鍵字，若已存在則回傳 False"""
-    kw_clean = keyword.strip()
-    if not kw_clean:
-        return False
+# ==========================================
+# 看板與關鍵字 CRUD 操作
+# ==========================================
+
+def add_board_keyword(board: str, keyword: str, db_path: Optional[str] = None) -> List[str]:
+    """
+    新增指定看板的一組或多組關鍵字（支援逗號分隔）
+    回傳成功新增的關鍵字清單
+    """
+    b_name = canonicalize_board_name(board)
+    raw_kws = [k.strip() for k in keyword.replace("，", ",").split(",") if k.strip()]
+    added = []
 
     with get_db_cursor(db_path) as cursor:
-        cursor.execute("SELECT 1 FROM keywords WHERE keyword = ?;", (kw_clean,))
-        if cursor.fetchone():
-            return False
+        for kw in raw_kws:
+            cursor.execute(
+                "SELECT 1 FROM board_keywords WHERE board = ? AND keyword = ?;",
+                (b_name, kw),
+            )
+            if not cursor.fetchone():
+                cursor.execute(
+                    "INSERT INTO board_keywords (board, keyword) VALUES (?, ?);",
+                    (b_name, kw),
+                )
+                added.append(kw)
 
-        cursor.execute(
-            "INSERT INTO keywords (keyword, created_at) VALUES (?, CURRENT_TIMESTAMP);",
-            (kw_clean,),
-        )
+    return added
+
+
+def delete_board_keyword(board: str, keyword: str, db_path: Optional[str] = None) -> List[str]:
+    """
+    刪除指定看板的關鍵字（支援逗號分隔或全部）
+    回傳成功刪除的關鍵字清單
+    """
+    b_name = canonicalize_board_name(board)
+    raw_kws = [k.strip() for k in keyword.replace("，", ",").split(",") if k.strip()]
+    deleted = []
+
+    with get_db_cursor(db_path) as cursor:
+        for kw in raw_kws:
+            cursor.execute(
+                "DELETE FROM board_keywords WHERE board = ? AND keyword = ?;",
+                (b_name, kw),
+            )
+            if cursor.rowcount > 0:
+                deleted.append(kw)
+
+    return deleted
+
+
+def set_board_min_push(board: str, min_push_count: int, db_path: Optional[str] = None) -> bool:
+    """設定或更新指定看板的推文門檻（若 min_push_count <= 0 則視為取消門檻）"""
+    b_name = canonicalize_board_name(board)
+    with get_db_cursor(db_path) as cursor:
+        if min_push_count > 0:
+            cursor.execute(
+                "INSERT OR REPLACE INTO board_settings (board, min_push_count) VALUES (?, ?);",
+                (b_name, int(min_push_count)),
+            )
+        else:
+            cursor.execute("DELETE FROM board_settings WHERE board = ?;", (b_name,))
         return True
 
 
-def delete_keyword(keyword: str, db_path: Optional[str] = None) -> bool:
-    """刪除關鍵字，若不存在回傳 False"""
-    kw_clean = keyword.strip()
-    if not kw_clean:
-        return False
-
+def delete_board_min_push(board: str, db_path: Optional[str] = None) -> bool:
+    """刪除/取消指定看板的推文門檻"""
+    b_name = canonicalize_board_name(board)
     with get_db_cursor(db_path) as cursor:
-        cursor.execute("DELETE FROM keywords WHERE keyword = ?;", (kw_clean,))
+        cursor.execute("DELETE FROM board_settings WHERE board = ?;", (b_name,))
         return cursor.rowcount > 0
 
 
-def get_keywords(db_path: Optional[str] = None) -> List[str]:
-    """取得所有監控關鍵字清單"""
+def get_board_keywords(board: str, db_path: Optional[str] = None) -> List[str]:
+    """獲取指定看板的關鍵字清單"""
+    b_name = canonicalize_board_name(board)
     with get_db_cursor(db_path) as cursor:
-        cursor.execute("SELECT keyword FROM keywords ORDER BY created_at ASC;")
-        rows = cursor.fetchall()
-        return [row["keyword"] for row in rows]
+        cursor.execute(
+            "SELECT keyword FROM board_keywords WHERE board = ? ORDER BY created_at ASC;",
+            (b_name,),
+        )
+        return [row["keyword"] for row in cursor.fetchall()]
 
+
+def get_all_monitored_boards_config(db_path: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
+    """
+    取得目前所有受監控看板之完整設定
+    格式:
+    {
+        "Stock": {"keywords": ["台積電", "美股"], "min_push_count": 50},
+        "Gossiping": {"keywords": [], "min_push_count": 80}
+    }
+    """
+    boards_config: Dict[str, Dict[str, Any]] = {}
+
+    with get_db_cursor(db_path) as cursor:
+        # 1. 撈取所有關鍵字
+        cursor.execute("SELECT board, keyword FROM board_keywords ORDER BY created_at ASC;")
+        for row in cursor.fetchall():
+            b = row["board"]
+            if b not in boards_config:
+                boards_config[b] = {"keywords": [], "min_push_count": 0}
+            boards_config[b]["keywords"].append(row["keyword"])
+
+        # 2. 撈取所有推文數設定
+        cursor.execute("SELECT board, min_push_count FROM board_settings;")
+        for row in cursor.fetchall():
+            b = row["board"]
+            if b not in boards_config:
+                boards_config[b] = {"keywords": [], "min_push_count": 0}
+            boards_config[b]["min_push_count"] = row["min_push_count"]
+
+    # 過濾掉完全沒有關鍵字且推文數為 0 的看板
+    active_configs = {
+        b: cfg for b, cfg in boards_config.items()
+        if (cfg["keywords"] or cfg["min_push_count"] > 0)
+    }
+    return active_configs
+
+
+# ==========================================
+# 系統開關（暫停 / 開始監控）
+# ==========================================
+
+def set_monitoring_paused(paused: bool, db_path: Optional[str] = None) -> None:
+    """設定系統暫停狀態"""
+    val = "1" if paused else "0"
+    with get_db_cursor(db_path) as cursor:
+        cursor.execute(
+            "INSERT OR REPLACE INTO system_settings (key, value) VALUES ('is_paused', ?);",
+            (val,),
+        )
+
+
+def is_monitoring_paused(db_path: Optional[str] = None) -> bool:
+    """檢查系統是否處於暫停狀態"""
+    with get_db_cursor(db_path) as cursor:
+        cursor.execute("SELECT value FROM system_settings WHERE key = 'is_paused';")
+        row = cursor.fetchone()
+        if row and row["value"] == "1":
+            return True
+        return False
+
+
+# ==========================================
+# 推播去重與統計
+# ==========================================
 
 def is_post_notified(platform: str, post_id: str, db_path: Optional[str] = None) -> bool:
     """檢查指定平台的文章是否已推播過"""
@@ -160,7 +325,6 @@ def mark_post_notified(
 ) -> bool:
     """記錄已推播的文章"""
     with get_db_cursor(db_path) as cursor:
-        # 使用 INSERT OR IGNORE 或 INSERT OR REPLACE
         cursor.execute(
             """
             INSERT OR REPLACE INTO notified_posts 
@@ -173,36 +337,32 @@ def mark_post_notified(
 
 
 def get_stats(db_path: Optional[str] = None) -> Dict[str, Any]:
-    """獲取資料庫統計資訊"""
+    """獲取詳細統計資訊"""
     with get_db_cursor(db_path) as cursor:
-        cursor.execute("SELECT COUNT(*) AS kw_count FROM keywords;")
+        cursor.execute("SELECT COUNT(*) AS kw_count FROM board_keywords;")
         kw_count = cursor.fetchone()["kw_count"]
 
         cursor.execute("SELECT COUNT(*) AS post_count FROM notified_posts;")
         post_count = cursor.fetchone()["post_count"]
 
-        cursor.execute(
-            """
-            SELECT platform, COUNT(*) as cnt 
-            FROM notified_posts 
-            GROUP BY platform;
-            """
-        )
-        platform_counts = {row["platform"]: row["cnt"] for row in cursor.fetchall()}
+        cursor.execute("SELECT value FROM system_settings WHERE key = 'is_paused';")
+        row = cursor.fetchone()
+        is_paused = (row is not None and row["value"] == "1")
+
+        all_cfg = get_all_monitored_boards_config(db_path)
 
         return {
-            "keyword_count": kw_count,
+            "is_paused": is_paused,
+            "monitored_boards_count": len(all_cfg),
+            "monitored_boards": list(all_cfg.keys()),
+            "total_keywords_count": kw_count,
             "total_notified_posts": post_count,
-            "platform_stats": platform_counts,
         }
 
 
-def cleanup_old_posts(days: int = 30, db_path: Optional[str] = None) -> int:
-    """清理超過 N 天的舊推播紀錄，避免資料庫無限膨脹"""
-    cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+# 舊版相容接口
+def get_keywords(db_path: Optional[str] = None) -> List[str]:
+    """舊版全域關鍵字相容接口"""
     with get_db_cursor(db_path) as cursor:
-        cursor.execute(
-            "DELETE FROM notified_posts WHERE created_at < ?;",
-            (cutoff,),
-        )
-        return cursor.rowcount
+        cursor.execute("SELECT DISTINCT keyword FROM board_keywords;")
+        return [r["keyword"] for r in cursor.fetchall()]

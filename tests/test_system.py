@@ -4,7 +4,6 @@ import unittest
 from config import Config
 import database as db
 from crawlers.ptt import PTTCrawler
-from crawlers.dcard import DcardCrawler
 from bot_handler import format_notification_html
 
 
@@ -13,7 +12,7 @@ class TestMonitorSystem(unittest.TestCase):
         # 使用暫存 SQLite 資料庫進行測試
         self.temp_db_fd, self.temp_db_path = tempfile.mkstemp(suffix=".db")
         os.close(self.temp_db_fd)
-        db.init_db(self.temp_db_path, default_keywords=["台積電", "美股"])
+        db.init_db(self.temp_db_path)
 
     def tearDown(self):
         if os.path.exists(self.temp_db_path):
@@ -22,28 +21,49 @@ class TestMonitorSystem(unittest.TestCase):
             except OSError:
                 pass
 
-    def test_database_crud(self):
-        # 1. 初始關鍵字檢查
-        kws = db.get_keywords(self.temp_db_path)
-        self.assertIn("台積電", kws)
-        self.assertIn("美股", kws)
+    def test_board_keywords_crud(self):
+        # 1. 預設規則檢查 (Stock 應有 台積電)
+        cfg = db.get_all_monitored_boards_config(self.temp_db_path)
+        self.assertIn("Stock", cfg)
+        self.assertIn("台積電", cfg["Stock"]["keywords"])
 
-        # 2. 新增關鍵字
-        added = db.add_keyword("聯發科", self.temp_db_path)
-        self.assertTrue(added)
-        # 重複新增應回傳 False
-        added_duplicate = db.add_keyword("聯發科", self.temp_db_path)
-        self.assertFalse(added_duplicate)
-        self.assertIn("聯發科", db.get_keywords(self.temp_db_path))
+        # 2. 新增看板關鍵字
+        added = db.add_board_keyword("C_Chat", "咒術迴戰,芙莉蓮", self.temp_db_path)
+        self.assertEqual(len(added), 2)
+        self.assertIn("咒術迴戰", added)
+        self.assertIn("芙莉蓮", added)
 
-        # 3. 刪除關鍵字
-        deleted = db.delete_keyword("聯發科", self.temp_db_path)
+        kws = db.get_board_keywords("C_Chat", self.temp_db_path)
+        self.assertIn("咒術迴戰", kws)
+        self.assertIn("芙莉蓮", kws)
+
+        # 3. 刪除看板關鍵字
+        deleted = db.delete_board_keyword("C_Chat", "咒術迴戰", self.temp_db_path)
+        self.assertIn("咒術迴戰", deleted)
+        kws_after = db.get_board_keywords("C_Chat", self.temp_db_path)
+        self.assertNotIn("咒術迴戰", kws_after)
+        self.assertIn("芙莉蓮", kws_after)
+
+    def test_board_push_count_crud(self):
+        # 1. 設定推文門檻
+        db.set_board_min_push("Gossiping", 100, self.temp_db_path)
+        cfg = db.get_all_monitored_boards_config(self.temp_db_path)
+        self.assertEqual(cfg["Gossiping"]["min_push_count"], 100)
+
+        # 2. 刪除推文門檻
+        deleted = db.delete_board_min_push("Gossiping", self.temp_db_path)
         self.assertTrue(deleted)
-        deleted_again = db.delete_keyword("聯發科", self.temp_db_path)
-        self.assertFalse(deleted_again)
-        self.assertNotIn("聯發科", db.get_keywords(self.temp_db_path))
+        cfg_after = db.get_all_monitored_boards_config(self.temp_db_path)
+        self.assertNotIn("Gossiping", cfg_after)  # Gossiping 無關鍵字且無推文數時自動移出 active
 
-        # 4. 推播文章去重檢查
+    def test_pause_resume_state(self):
+        self.assertFalse(db.is_monitoring_paused(self.temp_db_path))
+        db.set_monitoring_paused(True, self.temp_db_path)
+        self.assertTrue(db.is_monitoring_paused(self.temp_db_path))
+        db.set_monitoring_paused(False, self.temp_db_path)
+        self.assertFalse(db.is_monitoring_paused(self.temp_db_path))
+
+    def test_post_deduplication(self):
         is_notified = db.is_post_notified("PTT", "ptt_Stock_M123", self.temp_db_path)
         self.assertFalse(is_notified)
 
@@ -58,11 +78,6 @@ class TestMonitorSystem(unittest.TestCase):
         )
         self.assertTrue(marked)
         self.assertTrue(db.is_post_notified("PTT", "ptt_Stock_M123", self.temp_db_path))
-
-        # 5. 統計數據測試
-        stats = db.get_stats(self.temp_db_path)
-        self.assertEqual(stats["keyword_count"], 2)
-        self.assertEqual(stats["total_notified_posts"], 1)
 
     def test_ptt_filter(self):
         crawler = PTTCrawler()
@@ -114,42 +129,6 @@ class TestMonitorSystem(unittest.TestCase):
         self.assertEqual(len(matched), 2)
         self.assertIn("符合關鍵字 [台積電]", matched[0]["reason"])
         self.assertIn("爆文達成", matched[1]["reason"])
-
-    def test_dcard_filter(self):
-        crawler = DcardCrawler()
-        mock_posts = [
-            {
-                "platform": "Dcard",
-                "board": "stock",
-                "post_id": "dcard_stock_101",
-                "raw_id": "101",
-                "title": "美股投資新手請益",
-                "excerpt": "最近想買進標普500...",
-                "url": "https://www.dcard.tw/f/stock/p/101",
-                "like_count": 12,
-                "comment_count": 5,
-                "created_at": "2026-08-25T00:00:00.000Z",
-            },
-            {
-                "platform": "Dcard",
-                "board": "stock",
-                "post_id": "dcard_stock_102",
-                "raw_id": "102",
-                "title": "大家都買什麼定期定額？",
-                "excerpt": "好奇大家看法",
-                "url": "https://www.dcard.tw/f/stock/p/102",
-                "like_count": 80,
-                "comment_count": 150,
-                "created_at": "2026-08-25T00:00:00.000Z",
-            },
-        ]
-
-        matched = crawler.filter_matching_posts(
-            mock_posts, keywords=["美股"], min_like_count=50
-        )
-        self.assertEqual(len(matched), 2)
-        self.assertIn("符合關鍵字 [美股]", matched[0]["reason"])
-        self.assertIn("熱門文章達成 (80 讚)", matched[1]["reason"])
 
     def test_notification_html_formatting(self):
         post = {
