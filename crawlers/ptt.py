@@ -20,15 +20,18 @@ class PTTCrawler:
         self.session.headers.update(self.HEADERS)
         self.session.cookies.update(self.COOKIES)
 
-    def fetch_board_posts(self, board: str, pages: int = 1) -> List[Dict[str, Any]]:
+    def fetch_board_posts(
+        self, board: str, pages: int = 1, ignore_pinned: bool = True
+    ) -> List[Dict[str, Any]]:
         """
         抓取指定看板的最新文章列表
-        pages: 抓取的頁數（預設 1 頁，亦可抓 2 頁確保不漏文）
+        pages: 抓取的頁數（預設 1 頁）
+        ignore_pinned: 是否過濾置底公告文章（預設 True，過濾 PTT 永久置底公告）
         """
         posts = []
         url = f"{self.BASE_URL}/bbs/{board}/index.html"
 
-        for _ in range(pages):
+        for page_idx in range(pages):
             if not url:
                 break
             try:
@@ -38,7 +41,13 @@ class PTTCrawler:
                     break
 
                 soup = BeautifulSoup(resp.text, "html.parser")
-                entries = soup.select("div.r-ent")
+
+                # 若 ignore_pinned=True 且在第一頁，過濾掉置底公告 (<div class="r-list-sep"></div> 之後的文章)
+                if ignore_pinned and page_idx == 0 and soup.select_one("div.r-list-sep"):
+                    pinned_entries = set(soup.select("div.r-list-sep ~ div.r-ent"))
+                    entries = [e for e in soup.select("div.r-ent") if e not in pinned_entries]
+                else:
+                    entries = soup.select("div.r-ent")
 
                 for entry in entries:
                     parsed = self._parse_entry(board, entry)

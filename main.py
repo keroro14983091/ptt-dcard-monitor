@@ -23,7 +23,39 @@ async def monitor_crawler_loop(bot_holder: dict):
     ptt_crawler = PTTCrawler()
     dcard_crawler = DcardCrawler()
 
-    logger.info("📡 爬蟲監控背景任務啟動完成。")
+    logger.info("📡 爬蟲監控背景任務啟動中...")
+
+    # 1. 等待 Telegram Bot 初始化完成
+    for _ in range(30):
+        if not is_running:
+            return
+        if bot_holder.get("bot"):
+            break
+        await asyncio.sleep(0.5)
+
+    # 2. 系統啟動基準預熱 (Baseline Warmup)：
+    # 初次啟動時，先掃描看板現有文章並登記為已處理，避免推播啟動前的歷史舊文
+    try:
+        init_keywords = db.get_keywords()
+        logger.info(f"🔄 執行啟動基準預熱掃描... (登記啟動前現有文章，避免推播歷史舊文)")
+        for board in config.ptt_boards:
+            posts = await asyncio.to_thread(ptt_crawler.fetch_board_posts, board, pages=1, ignore_pinned=True)
+            matched_posts = ptt_crawler.filter_matching_posts(
+                posts, init_keywords, min_push_count=config.ptt_min_push_count
+            )
+            for post in matched_posts:
+                if not db.is_post_notified(post["platform"], post["post_id"]):
+                    db.mark_post_notified(
+                        platform=post["platform"],
+                        post_id=post["post_id"],
+                        title=post["title"],
+                        url=post["url"],
+                        board=post["board"],
+                        reason=post["reason"],
+                    )
+        logger.info("✅ 啟動基準建立完成！即刻起僅監控與推播「從現在起新發布/新達標」之文章。")
+    except Exception as e:
+        logger.warning(f"啟動基準預熱掃描異常: {e}")
 
     while is_running:
         try:
@@ -39,7 +71,7 @@ async def monitor_crawler_loop(bot_holder: dict):
                     break
                 try:
                     logger.debug(f"[PTT] 正在抓取看板: {board}")
-                    posts = await asyncio.to_thread(ptt_crawler.fetch_board_posts, board, pages=1)
+                    posts = await asyncio.to_thread(ptt_crawler.fetch_board_posts, board, pages=1, ignore_pinned=True)
                     matched_posts = ptt_crawler.filter_matching_posts(
                         posts, keywords, min_push_count=config.ptt_min_push_count
                     )
