@@ -62,7 +62,7 @@ class Config:
         ptt_boards_raw = os.getenv("PTT_BOARDS", "Stock,Lifeismoney,Gossiping")
         ptt_boards = [b.strip() for b in ptt_boards_raw.split(",") if b.strip()]
 
-        dcard_boards_raw = os.getenv("DCARD_BOARDS", "stock,tech_job")
+        dcard_boards_raw = os.getenv("DCARD_BOARDS", "")
         dcard_boards = [b.strip() for b in dcard_boards_raw.split(",") if b.strip()]
 
         default_keywords_raw = os.getenv("DEFAULT_KEYWORDS", "台積電,美股,優惠,買一送一,分紅")

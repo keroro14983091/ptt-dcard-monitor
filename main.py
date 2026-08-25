@@ -217,7 +217,8 @@ async def main():
     logger.info("==================================================")
     logger.info("🚀 PTT & Dcard 關鍵字/爆文自動監控與推播系統 啟動中...")
     logger.info(f"📌 PTT 監控看板: {', '.join(config.ptt_boards)}")
-    logger.info(f"📌 Dcard 監控看板: {', '.join(config.dcard_boards)}")
+    if config.dcard_boards:
+        logger.info(f"📌 Dcard 監控看板: {', '.join(config.dcard_boards)}")
     logger.info(f"📌 授權 Chat ID: {', '.join(config.telegram_chat_ids)}")
     logger.info("==================================================")
 

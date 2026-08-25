@@ -143,18 +143,19 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     """處理 /status 指令"""
     stats = db.get_stats()
     ptt_boards = ", ".join(config.ptt_boards)
-    dcard_boards = ", ".join(config.dcard_boards)
+    dcard_info = f"\n📌 <b>Dcard 監控看板：</b> {', '.join(config.dcard_boards)}" if config.dcard_boards else ""
+    dcard_threshold = f"\n🔥 <b>Dcard 讚數門檻：</b> {config.dcard_min_like_count} 讚" if config.dcard_boards else ""
 
     msg = (
         "📊 <b>系統運作狀態回報</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         f"🟢 <b>監控關鍵字總數：</b> {stats['keyword_count']} 組\n"
         f"📬 <b>歷史推播總數：</b> {stats['total_notified_posts']} 篇\n"
-        f"📌 <b>PTT 監控看板：</b> {ptt_boards}\n"
-        f"📌 <b>Dcard 監控看板：</b> {dcard_boards}\n"
+        f"📌 <b>PTT 監控看板：</b> {ptt_boards}"
+        f"{dcard_info}\n"
         f"⏱️ <b>輪詢間隔：</b> {config.poll_interval_min_sec} ~ {config.poll_interval_max_sec} 秒\n"
-        f"🔥 <b>PTT 爆文門檻：</b> {config.ptt_min_push_count} 推 / 爆\n"
-        f"🔥 <b>Dcard 讚數門檻：</b> {config.dcard_min_like_count} 讚\n"
+        f"🔥 <b>PTT 爆文門檻：</b> {config.ptt_min_push_count} 推 / 爆"
+        f"{dcard_threshold}\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "⚡ <i>服務正常運作中</i>"
     )
