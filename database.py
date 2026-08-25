@@ -140,8 +140,8 @@ def init_db(db_path: Optional[str] = None) -> None:
         if bk_count == 0 and bs_count == 0:
             logger.info("看板規則資料表為空，初始化預設看板監控規則...")
             default_rules = [
-                ("Stock", ["台積電", "美股", "分紅"], 50),
-                ("Lifeismoney", ["優惠", "買一送一", "抽獎"], 50),
+                ("Stock", ["群聯", "宜鼎", "創新服務", "漢唐"], 50),
+                ("Lifeismoney", ["機票", "航空", "住宿", "旅行", "chatgpt", "gemini", "codex", "蝦皮", "電影"], 50),
                 ("Gossiping", [], 80),
             ]
             for b_name, kws, push_th in default_rules:
