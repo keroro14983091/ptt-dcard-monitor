@@ -62,6 +62,13 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "🔹 <code>刪除關鍵字 &lt;看板&gt; &lt;關鍵字&gt;</code>\n"
         "   👉 刪除該看板的指定關鍵字\n"
         "   範例：<code>刪除關鍵字 Stock 台積電</code>\n\n"
+        "📌 <b>【排除關鍵字 (黑名單)】</b>\n"
+        "🔹 <code>新增排除 &lt;看板&gt; &lt;關鍵字&gt;</code>\n"
+        "   👉 設定命中即不推播的排除字詞（即使爆文也不推播）\n"
+        "   範例：<code>新增排除 Stock 盤前,盤後,閒聊</code>\n\n"
+        "🔹 <code>刪除排除 &lt;看板&gt; &lt;關鍵字&gt;</code>\n"
+        "   👉 移除該看板的指定排除字詞\n"
+        "   範例：<code>刪除排除 Stock 盤前</code>\n\n"
         "📌 <b>【推文數門檻管理】</b>\n"
         "🔹 <code>新增推文數 &lt;看板&gt; &lt;推文數&gt;</code>\n"
         "   👉 設定該看板達到多少推文（或爆文）才推播\n"
@@ -72,7 +79,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "   範例：<code>刪除推文數 Stock</code>\n\n"
         "📌 <b>【清單與狀態查詢】</b>\n"
         "🔹 <code>清單</code>\n"
-        "   👉 顯示所有監控看板的關鍵字與推文數設定\n\n"
+        "   👉 顯示所有監控看板的包含/排除關鍵字與推文數設定\n\n"
         "🔹 <code>狀態</code>\n"
         "   👉 查詢系統運行狀態（運行中 / 暫停中）與推播統計\n\n"
         "📌 <b>【星宇機票查價】</b>\n"
@@ -102,20 +109,24 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "📭 <b>目前沒有任何受監控的看板與條件。</b>\n\n"
             "💡 可使用以下指令開始監控：\n"
             "• <code>新增關鍵字 Stock 台積電</code>\n"
+            "• <code>新增排除 Stock 盤前,盤後,閒聊</code>\n"
             "• <code>新增推文數 Gossiping 80</code>"
         )
     else:
         content_lines = []
         for idx, (board, cfg) in enumerate(boards_config.items(), 1):
             kws = cfg.get("keywords", [])
+            ex_kws = cfg.get("exclude_keywords", [])
             min_push = cfg.get("min_push_count", 0)
 
             kw_text = ", ".join([f"<code>{html.escape(k)}</code>" for k in kws]) if kws else "<i>(未設定)</i>"
+            ex_text = ", ".join([f"<code>{html.escape(k)}</code>" for k in ex_kws]) if ex_kws else "<i>(無)</i>"
             push_text = f"<b>{min_push} 推 / 爆</b>" if min_push > 0 else "<i>(未設定)</i>"
 
             block = (
                 f"🏷️ <b>{idx}. 看板：{html.escape(board)}</b>\n"
-                f"   🎯 關鍵字：{kw_text}\n"
+                f"   🎯 包含關鍵字：{kw_text}\n"
+                f"   🚫 排除關鍵字：{ex_text}\n"
                 f"   🔥 推文門檻：{push_text}"
             )
             content_lines.append(block)
@@ -126,7 +137,7 @@ async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "━━━━━━━━━━━━━━━━━━━━\n"
             + "\n\n".join(content_lines)
             + "\n━━━━━━━━━━━━━━━━━━━━\n"
-            "💡 提示：只要看板設有關鍵字或推文數，系統就會自動排程監控！"
+            "💡 提示：若命中排除關鍵字，即使達到爆文也不會推播！"
         )
 
     if update.effective_message:
@@ -235,6 +246,54 @@ async def handle_del_keyword_text(update: Update, board: str, keyword: str) -> N
         msg = f"🗑️ 已成功從 <b>【{html.escape(b_name)}】</b> 看板刪除關鍵字：{kws_str}"
     else:
         msg = f"⚠️ 在 <b>【{html.escape(b_name)}】</b> 看板中找不到指定的關鍵字，請輸入「清單」確認。"
+
+    if update.effective_message:
+        await update.effective_message.reply_text(msg, parse_mode=ParseMode.HTML)
+
+
+@authorized_only
+async def handle_add_exclude_keyword_text(update: Update, board: str, keyword: str) -> None:
+    """處理 新增排除 <看板> <關鍵字>"""
+    if not board or not keyword:
+        if update.effective_message:
+            await update.effective_message.reply_text(
+                "⚠️ <b>格式錯誤</b>\n用法範例：<code>新增排除 Stock 盤前,盤後,閒聊</code>",
+                parse_mode=ParseMode.HTML,
+            )
+        return
+
+    added = db.add_board_exclude_keyword(board, keyword)
+    b_name = db.canonicalize_board_name(board)
+
+    if added:
+        kws_str = ", ".join([f"<b>{html.escape(k)}</b>" for k in added])
+        msg = f"🚫 已成功為 <b>【{html.escape(b_name)}】</b> 看板新增排除關鍵字（黑名單）：{kws_str}\n\n💡 標題含有這些字詞時，即使達到爆文也不會推播！"
+    else:
+        msg = f"ℹ️ 排除關鍵字已在 <b>【{html.escape(b_name)}】</b> 看板黑名單中，無需重複新增。"
+
+    if update.effective_message:
+        await update.effective_message.reply_text(msg, parse_mode=ParseMode.HTML)
+
+
+@authorized_only
+async def handle_del_exclude_keyword_text(update: Update, board: str, keyword: str) -> None:
+    """處理 刪除排除 <看板> <關鍵字>"""
+    if not board or not keyword:
+        if update.effective_message:
+            await update.effective_message.reply_text(
+                "⚠️ <b>格式錯誤</b>\n用法範例：<code>刪除排除 Stock 盤前</code>",
+                parse_mode=ParseMode.HTML,
+            )
+        return
+
+    deleted = db.delete_board_exclude_keyword(board, keyword)
+    b_name = db.canonicalize_board_name(board)
+
+    if deleted:
+        kws_str = ", ".join([f"<b>{html.escape(k)}</b>" for k in deleted])
+        msg = f"🗑️ 已成功從 <b>【{html.escape(b_name)}】</b> 看板移除排除關鍵字：{kws_str}"
+    else:
+        msg = f"⚠️ 在 <b>【{html.escape(b_name)}】</b> 看板中找不到指定的排除關鍵字，請輸入「清單」確認。"
 
     if update.effective_message:
         await update.effective_message.reply_text(msg, parse_mode=ParseMode.HTML)
@@ -368,17 +427,17 @@ async def text_message_dispatcher(update: Update, context: ContextTypes.DEFAULT_
         await status_command(update, context)
         return
 
-    # 4. 停止監控 / 暫停
+    # 5. 停止監控 / 暫停
     if raw_text in ("停止監控", "暫停監控", "暫停", "/pause"):
         await pause_command(update, context)
         return
 
-    # 5. 開始監控 / 恢復
+    # 6. 開始監控 / 恢復
     if raw_text in ("開始監控", "恢復監控", "開始", "恢復", "/resume"):
         await resume_command(update, context)
         return
 
-    # 6. 新增關鍵字 <看板> <關鍵字>
+    # 7. 新增關鍵字 <看板> <關鍵字>
     if raw_text.startswith("新增關鍵字") or raw_text.startswith("+關鍵字") or raw_text.startswith("+關鍵"):
         parts = raw_text.split(None, 2)
         if len(parts) >= 3:
@@ -386,7 +445,6 @@ async def text_message_dispatcher(update: Update, context: ContextTypes.DEFAULT_
             keyword = parts[2].strip()
             await handle_add_keyword_text(update, board, keyword)
         elif len(parts) == 2 and "," in parts[1]:
-            # 兼容：新增關鍵字 Stock,台積電
             sub_parts = parts[1].split(",", 1)
             await handle_add_keyword_text(update, sub_parts[0], sub_parts[1])
         else:
@@ -396,7 +454,7 @@ async def text_message_dispatcher(update: Update, context: ContextTypes.DEFAULT_
             )
         return
 
-    # 7. 刪除關鍵字 <看板> <關鍵字>
+    # 8. 刪除關鍵字 <看板> <關鍵字>
     if raw_text.startswith("刪除關鍵字") or raw_text.startswith("-關鍵字") or raw_text.startswith("-關鍵"):
         parts = raw_text.split(None, 2)
         if len(parts) >= 3:
@@ -410,7 +468,38 @@ async def text_message_dispatcher(update: Update, context: ContextTypes.DEFAULT_
             )
         return
 
-    # 8. 新增推文數 / 設定推文數 <看板> <推文數>
+    # 9. 新增排除 <看板> <關鍵字>
+    if raw_text.startswith("新增排除") or raw_text.startswith("+排除") or raw_text.startswith("排除關鍵字"):
+        parts = raw_text.split(None, 2)
+        if len(parts) >= 3:
+            board = parts[1].strip()
+            keyword = parts[2].strip()
+            await handle_add_exclude_keyword_text(update, board, keyword)
+        elif len(parts) == 2 and "," in parts[1]:
+            sub_parts = parts[1].split(",", 1)
+            await handle_add_exclude_keyword_text(update, sub_parts[0], sub_parts[1])
+        else:
+            await update.effective_message.reply_text(
+                "⚠️ <b>格式範例：</b><code>新增排除 Stock 盤前,盤後,閒聊</code>",
+                parse_mode=ParseMode.HTML,
+            )
+        return
+
+    # 10. 刪除排除 <看板> <關鍵字>
+    if raw_text.startswith("刪除排除") or raw_text.startswith("-排除") or raw_text.startswith("取消排除"):
+        parts = raw_text.split(None, 2)
+        if len(parts) >= 3:
+            board = parts[1].strip()
+            keyword = parts[2].strip()
+            await handle_del_exclude_keyword_text(update, board, keyword)
+        else:
+            await update.effective_message.reply_text(
+                "⚠️ <b>格式範例：</b><code>刪除排除 Stock 盤前</code>",
+                parse_mode=ParseMode.HTML,
+            )
+        return
+
+    # 11. 新增推文數 / 設定推文數 <看板> <推文數>
     if raw_text.startswith("新增推文數") or raw_text.startswith("設定推文數") or raw_text.startswith("+推文數"):
         parts = raw_text.split(None, 2)
         if len(parts) >= 3:
@@ -424,7 +513,7 @@ async def text_message_dispatcher(update: Update, context: ContextTypes.DEFAULT_
             )
         return
 
-    # 9. 刪除推文數 <看板> [推文數]
+    # 12. 刪除推文數 <看板> [推文數]
     if raw_text.startswith("刪除推文數") or raw_text.startswith("-推文數") or raw_text.startswith("取消推文數"):
         parts = raw_text.split()
         if len(parts) >= 2:

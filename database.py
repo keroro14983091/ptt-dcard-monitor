@@ -70,6 +70,18 @@ def init_db(db_path: Optional[str] = None) -> None:
             """
         )
 
+        # 1.1 建立 board_exclude_keywords 排除關鍵字資料表
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS board_exclude_keywords (
+                board TEXT NOT NULL,
+                keyword TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (board, keyword)
+            );
+            """
+        )
+
         # 2. 建立 board_settings 資料表
         cursor.execute(
             """
@@ -130,6 +142,12 @@ def init_db(db_path: Optional[str] = None) -> None:
             ON board_keywords (board);
             """
         )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_board_exkw_lookup 
+            ON board_exclude_keywords (board);
+            """
+        )
 
         # 6. 初始化預設看板與規則 (若 board_keywords 與 board_settings 皆為空)
         cursor.execute("SELECT COUNT(*) AS cnt FROM board_keywords;")
@@ -155,6 +173,13 @@ def init_db(db_path: Optional[str] = None) -> None:
                         "INSERT OR REPLACE INTO board_settings (board, min_push_count) VALUES (?, ?);",
                         (b_name, push_th),
                     )
+
+        # 7. 預設為 Stock 板建立 盤前、盤後、閒聊 排除規則
+        for default_ex in ["盤前", "盤後", "閒聊"]:
+            cursor.execute(
+                "INSERT OR IGNORE INTO board_exclude_keywords (board, keyword) VALUES ('Stock', ?);",
+                (default_ex,)
+            )
 
 
 # ==========================================
@@ -229,12 +254,50 @@ def delete_board_min_push(board: str, db_path: Optional[str] = None) -> bool:
         return cursor.rowcount > 0
 
 
-def get_board_keywords(board: str, db_path: Optional[str] = None) -> List[str]:
-    """獲取指定看板的關鍵字清單"""
+def add_board_exclude_keyword(board: str, keyword: str, db_path: Optional[str] = None) -> List[str]:
+    """新增指定看板的一組或多組排除關鍵字（黑名單，支援逗號分隔）"""
+    b_name = canonicalize_board_name(board)
+    raw_kws = [k.strip() for k in keyword.replace("，", ",").split(",") if k.strip()]
+    added = []
+
+    with get_db_cursor(db_path) as cursor:
+        for kw in raw_kws:
+            cursor.execute(
+                "SELECT 1 FROM board_exclude_keywords WHERE board = ? AND keyword = ?;",
+                (b_name, kw),
+            )
+            if not cursor.fetchone():
+                cursor.execute(
+                    "INSERT INTO board_exclude_keywords (board, keyword) VALUES (?, ?);",
+                    (b_name, kw),
+                )
+                added.append(kw)
+    return added
+
+
+def delete_board_exclude_keyword(board: str, keyword: str, db_path: Optional[str] = None) -> List[str]:
+    """刪除指定看板的一組或多組排除關鍵字"""
+    b_name = canonicalize_board_name(board)
+    raw_kws = [k.strip() for k in keyword.replace("，", ",").split(",") if k.strip()]
+    deleted = []
+
+    with get_db_cursor(db_path) as cursor:
+        for kw in raw_kws:
+            cursor.execute(
+                "DELETE FROM board_exclude_keywords WHERE board = ? AND keyword = ?;",
+                (b_name, kw),
+            )
+            if cursor.rowcount > 0:
+                deleted.append(kw)
+    return deleted
+
+
+def get_board_exclude_keywords(board: str, db_path: Optional[str] = None) -> List[str]:
+    """獲取指定看板的排除關鍵字清單"""
     b_name = canonicalize_board_name(board)
     with get_db_cursor(db_path) as cursor:
         cursor.execute(
-            "SELECT keyword FROM board_keywords WHERE board = ? ORDER BY created_at ASC;",
+            "SELECT keyword FROM board_exclude_keywords WHERE board = ? ORDER BY created_at ASC;",
             (b_name,),
         )
         return [row["keyword"] for row in cursor.fetchall()]
@@ -245,33 +308,41 @@ def get_all_monitored_boards_config(db_path: Optional[str] = None) -> Dict[str, 
     取得目前所有受監控看板之完整設定
     格式:
     {
-        "Stock": {"keywords": ["台積電", "美股"], "min_push_count": 50},
-        "Gossiping": {"keywords": [], "min_push_count": 80}
+        "Stock": {"keywords": ["台積電"], "exclude_keywords": ["盤前", "盤後"], "min_push_count": 50},
+        "Gossiping": {"keywords": [], "exclude_keywords": [], "min_push_count": 80}
     }
     """
     boards_config: Dict[str, Dict[str, Any]] = {}
 
     with get_db_cursor(db_path) as cursor:
-        # 1. 撈取所有關鍵字
+        # 1. 撈取所有包含關鍵字
         cursor.execute("SELECT board, keyword FROM board_keywords ORDER BY created_at ASC;")
         for row in cursor.fetchall():
             b = row["board"]
             if b not in boards_config:
-                boards_config[b] = {"keywords": [], "min_push_count": 0}
+                boards_config[b] = {"keywords": [], "exclude_keywords": [], "min_push_count": 0}
             boards_config[b]["keywords"].append(row["keyword"])
 
-        # 2. 撈取所有推文數設定
+        # 2. 撈取所有排除關鍵字
+        cursor.execute("SELECT board, keyword FROM board_exclude_keywords ORDER BY created_at ASC;")
+        for row in cursor.fetchall():
+            b = row["board"]
+            if b not in boards_config:
+                boards_config[b] = {"keywords": [], "exclude_keywords": [], "min_push_count": 0}
+            boards_config[b]["exclude_keywords"].append(row["keyword"])
+
+        # 3. 撈取所有推文數設定
         cursor.execute("SELECT board, min_push_count FROM board_settings;")
         for row in cursor.fetchall():
             b = row["board"]
             if b not in boards_config:
-                boards_config[b] = {"keywords": [], "min_push_count": 0}
+                boards_config[b] = {"keywords": [], "exclude_keywords": [], "min_push_count": 0}
             boards_config[b]["min_push_count"] = row["min_push_count"]
 
-    # 過濾掉完全沒有關鍵字且推文數為 0 的看板
+    # 過濾掉完全沒有任何條件的看板
     active_configs = {
         b: cfg for b, cfg in boards_config.items()
-        if (cfg["keywords"] or cfg["min_push_count"] > 0)
+        if (cfg["keywords"] or cfg["exclude_keywords"] or cfg["min_push_count"] > 0)
     }
     return active_configs
 

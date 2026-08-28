@@ -124,18 +124,26 @@ class PTTCrawler:
         self,
         posts: List[Dict[str, Any]],
         keywords: List[str],
+        exclude_keywords: Optional[List[str]] = None,
         min_push_count: int = 50,
     ) -> List[Dict[str, Any]]:
         """
-        依據即時關鍵字及爆文門檻過濾文章：
-        1. 標題符合任何關鍵字（不分大小寫）
-        2. 推文數為「爆」或大於等於 min_push_count
+        依據即時關鍵字、排除關鍵字及爆文門檻過濾文章：
+        1. 標題含有任何「排除關鍵字」-> 絕對排除跳過 (不論推文數多高)
+        2. 標題符合任何「包含關鍵字」（不分大小寫）
+        3. 推文數為「爆」或大於等於 min_push_count
         """
         matched_posts = []
-        clean_keywords = [kw.strip().lower() for kw in keywords if kw.strip()]
+        clean_keywords = [kw.strip().lower() for kw in (keywords or []) if kw.strip()]
+        clean_exclude_kws = [ex.strip().lower() for ex in (exclude_keywords or []) if ex.strip()]
 
         for post in posts:
             title_lower = post["title"].lower()
+
+            # 1. 黑名單檢查：若命中任何排除詞，直接略過
+            if any(ex_kw in title_lower for ex_kw in clean_exclude_kws):
+                continue
+
             matched_kws = [kw for kw in clean_keywords if kw in title_lower]
 
             is_push_hot = post["is_bao"] or (

@@ -38,10 +38,11 @@ async def monitor_crawler_loop(bot_holder: dict):
         logger.info(f"🔄 執行啟動基準預熱掃描... (正在為 {len(boards_config)} 個看板登記現有文章)")
         for board, rule in boards_config.items():
             kws = rule.get("keywords", [])
+            ex_kws = rule.get("exclude_keywords", [])
             min_push = rule.get("min_push_count", 0)
             posts = await asyncio.to_thread(ptt_crawler.fetch_board_posts, board, pages=1, ignore_pinned=True)
             matched_posts = ptt_crawler.filter_matching_posts(
-                posts, kws, min_push_count=min_push
+                posts, kws, exclude_keywords=ex_kws, min_push_count=min_push
             )
             for post in matched_posts:
                 if not db.is_post_notified(post["platform"], post["post_id"]):
@@ -87,13 +88,14 @@ async def monitor_crawler_loop(bot_holder: dict):
                 if not is_running or db.is_monitoring_paused():
                     break
                 kws = rule.get("keywords", [])
+                ex_kws = rule.get("exclude_keywords", [])
                 min_push = rule.get("min_push_count", 0)
 
                 try:
-                    logger.debug(f"[PTT] 正在抓取看板: {board} (關鍵字數: {len(kws)}, 門檻: {min_push})")
+                    logger.debug(f"[PTT] 正在抓取看板: {board} (包含詞數: {len(kws)}, 排除詞數: {len(ex_kws)}, 門檻: {min_push})")
                     posts = await asyncio.to_thread(ptt_crawler.fetch_board_posts, board, pages=1, ignore_pinned=True)
                     matched_posts = ptt_crawler.filter_matching_posts(
-                        posts, kws, min_push_count=min_push
+                        posts, kws, exclude_keywords=ex_kws, min_push_count=min_push
                     )
 
                     for post in matched_posts:
