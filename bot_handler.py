@@ -361,7 +361,7 @@ async def handle_flight_check_text(update: Update) -> None:
 
     # 先發送正在查詢中提示
     wait_msg = await update.effective_message.reply_text(
-        "🔍 <b>正在為您即時查詢星宇航空（台中 ⇄ 下地島）雙人最新票價，請稍候約 3~5 秒...</b>",
+        "🔍 <b>正在為您即時查詢星宇航空（宮古島）與中華航空（峇里島）雙人最新票價，請稍候約 5~10 秒...</b>",
         parse_mode=ParseMode.HTML
     )
 
@@ -372,24 +372,30 @@ async def handle_flight_check_text(update: Update) -> None:
 
         for res in results:
             if res.get("success"):
+                btn_text = res.get("btn_text", "✈️ 前往官網查票/訂位")
                 btn = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("✈️ 前往星宇航空官網查票/訂位", url=res.get("booking_url", "https://www.starlux-airlines.com/zh-TW"))]
+                    [InlineKeyboardButton(btn_text, url=res.get("booking_url", "https://www.google.com/travel/flights"))]
                 ])
                 await update.effective_message.reply_text(
                     res["html"],
                     parse_mode=ParseMode.HTML,
-                    reply_markup=btn
+                    reply_markup=btn,
+                    disable_web_page_preview=True
                 )
             else:
+                dep = res.get("departure", "RMQ")
+                arr = res.get("arrival", "SHI")
                 outbound = res.get("outbound", "")
                 inbound = res.get("inbound", "")
+                airline = res.get("airline", "航空公司")
                 err = res.get("error", "查詢失敗")
                 await update.effective_message.reply_text(
-                    f"⚠️ <b>【機票查詢提醒】</b>\n\n"
-                    f"📍 航線：台中 (<code>RMQ</code>) ⇄ 下地島 (<code>SHI</code>)\n"
+                    f"⚠️ <b>【機票查詢提醒・{airline}】</b>\n\n"
+                    f"📍 航線：{dep} ⇄ {arr}\n"
                     f"📅 日期：{outbound} ⇄ {inbound}\n"
                     f"❌ 狀態：{html.escape(err)}",
-                    parse_mode=ParseMode.HTML
+                    parse_mode=ParseMode.HTML,
+                    disable_web_page_preview=True
                 )
     except Exception as e:
         logger.error(f"即時查票執行失敗: {e}", exc_info=True)

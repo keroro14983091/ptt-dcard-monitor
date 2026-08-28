@@ -1,7 +1,7 @@
 """
 flight_checker.py
 -----------------
-星宇航空（台中 RMQ ⇄ 下地島 SHI）雙人機票即時查詢模組。
+星宇航空（台中 ⇄ 下地島）與中華航空（台北桃園 ⇄ 峇里島）雙人機票即時查詢模組。
 無縫整合於 PTT / Dcard 推播監控機器人中。
 """
 
@@ -19,9 +19,60 @@ logger = logging.getLogger("PTTMonitor.FlightChecker")
 DEFAULT_SERPAPI_KEY = "677373e0cf225645df8d772f91167c48ae3fee661923f0fecd56c45b683519d0"
 SERPAPI_ENDPOINT = "https://serpapi.com/search.json"
 
-TARGET_DATES = [
-    {"outbound": "2027-03-06", "inbound": "2027-03-10", "note": "三月初梯次 (03/06~03/10)"},
-    {"outbound": "2027-03-13", "inbound": "2027-03-17", "note": "三月中梯次 (03/13~03/17)"}
+AIRPORT_NAMES = {
+    "RMQ": "台中",
+    "TPE": "台北桃園",
+    "TSA": "台北松山",
+    "KHH": "高雄",
+    "SHI": "下地島/宮古島",
+    "DPS": "峇里島/登巴薩",
+    "OKA": "沖繩那霸",
+    "TAK": "日本高松",
+}
+
+TARGET_ROUTES = [
+    # 1. 星宇航空 台中 ⇄ 下地島/宮古島
+    {
+        "departure": "RMQ",
+        "arrival": "SHI",
+        "outbound": "2027-03-06",
+        "inbound": "2027-03-10",
+        "note": "三月初梯次 (03/06~03/10)",
+        "airline": "星宇航空",
+        "preferred_kw": "STARLUX",
+        "official_url": "https://www.starlux-airlines.com/zh-TW"
+    },
+    {
+        "departure": "RMQ",
+        "arrival": "SHI",
+        "outbound": "2027-03-13",
+        "inbound": "2027-03-17",
+        "note": "三月中梯次 (03/13~03/17)",
+        "airline": "星宇航空",
+        "preferred_kw": "STARLUX",
+        "official_url": "https://www.starlux-airlines.com/zh-TW"
+    },
+    # 2. 中華航空 台北桃園 ⇄ 峇里島/登巴薩
+    {
+        "departure": "TPE",
+        "arrival": "DPS",
+        "outbound": "2027-05-06",
+        "inbound": "2027-05-11",
+        "note": "五月初梯次 (05/06~05/11)",
+        "airline": "中華航空",
+        "preferred_kw": "CHINA AIRLINES",
+        "official_url": "https://www.china-airlines.com/zh-tw"
+    },
+    {
+        "departure": "TPE",
+        "arrival": "DPS",
+        "outbound": "2027-05-13",
+        "inbound": "2027-05-18",
+        "note": "五月中梯次 (05/13~05/18)",
+        "airline": "中華航空",
+        "preferred_kw": "CHINA AIRLINES",
+        "official_url": "https://www.china-airlines.com/zh-tw"
+    },
 ]
 
 
@@ -75,20 +126,25 @@ def _save_price(route_key: str, price: float, currency: str = "TWD"):
 
 
 def fetch_starlux_flights_sync() -> List[Dict[str, Any]]:
-    """向 SerpApi 查詢星宇航空雙人票價並產出格式化卡片資料"""
+    """向 SerpApi 查詢宮古島與峇里島雙人票價並產出格式化卡片資料"""
     api_key = os.getenv("SERPAPI_KEY", DEFAULT_SERPAPI_KEY).strip()
     results = []
 
-    for item in TARGET_DATES:
+    for item in TARGET_ROUTES:
+        dep = item["departure"]
+        arr = item["arrival"]
         outbound = item["outbound"]
         inbound = item["inbound"]
         note = item["note"]
-        route_key = f"RMQ_SHI_{outbound}_{inbound}"
+        airline = item["airline"]
+        p_kw = item["preferred_kw"]
+        official_url = item["official_url"]
+        route_key = f"{dep}_{arr}_{airline}_{outbound}_{inbound}"
 
         params = {
             "engine": "google_flights",
-            "departure_id": "RMQ",
-            "arrival_id": "SHI",
+            "departure_id": dep,
+            "arrival_id": arr,
             "outbound_date": outbound,
             "return_date": inbound,
             "currency": "TWD",
@@ -111,31 +167,44 @@ def fetch_starlux_flights_sync() -> List[Dict[str, Any]]:
             if not all_flights:
                 results.append({
                     "success": False,
-                    "error": "查無當日航班資訊（星宇可能未開航此日期或已售罄）",
+                    "error": f"查無當日航班資訊（{airline} 可能未開航此日期或已售罄）",
+                    "departure": dep,
+                    "arrival": arr,
                     "outbound": outbound,
                     "inbound": inbound,
-                    "note": note
+                    "note": note,
+                    "airline": airline
                 })
                 continue
 
-            # 優先找星宇
-            starlux_flights = []
+            # 依偏好航司過濾
+            matched_flights = []
             for f in all_flights:
                 legs = f.get("flights", [])
                 airline_names = [leg.get("airline", "") for leg in legs]
-                airline_str = " / ".join(airline_names)
-                if "星宇" in airline_str or "STARLUX" in airline_str.upper() or "JX" in str(legs):
-                    starlux_flights.append(f)
+                airline_str = " / ".join(airline_names).upper()
+                flight_nos = " / ".join([leg.get("flight_number", "") for leg in legs]).upper()
 
-            target_flight = starlux_flights[0] if starlux_flights else all_flights[0]
+                if p_kw in airline_str or p_kw in flight_nos:
+                    matched_flights.append(f)
+                elif "星宇" in airline and ("星宇" in airline_str or "JX" in flight_nos):
+                    matched_flights.append(f)
+                elif "華航" in airline or "中華" in airline:
+                    if "中華" in airline_str or "CI" in flight_nos or "CHINA AIRLINES" in airline_str:
+                        matched_flights.append(f)
+
+            target_flight = matched_flights[0] if matched_flights else all_flights[0]
             curr_total = float(target_flight.get("price", 0))
             if curr_total <= 0:
                 results.append({
                     "success": False,
                     "error": "未能提取有效票價",
+                    "departure": dep,
+                    "arrival": arr,
                     "outbound": outbound,
                     "inbound": inbound,
-                    "note": note
+                    "note": note,
+                    "airline": airline
                 })
                 continue
 
@@ -169,12 +238,14 @@ def fetch_starlux_flights_sync() -> List[Dict[str, Any]]:
                 pct_low = (diff_low / lowest_bench) * 100.0 if lowest_bench > 0 else 0
                 lowest_str = f"<code>TWD {lowest_bench:,.0f}</code> <i>(距低點 +{diff_low:,.0f} / +{pct_low:.1f}%)</i>"
 
-            booking_url = target_flight.get("booking_url") or "https://www.starlux-airlines.com/zh-TW"
+            booking_url = target_flight.get("booking_url") or official_url
             now_time = datetime.now().strftime("%Y-%m-%d %H:%M")
+            dep_name = AIRPORT_NAMES.get(dep, dep)
+            arr_name = AIRPORT_NAMES.get(arr, arr)
 
             card_html = (
-                f"🎉 <b>【星宇航空・雙人機票即時回報】</b>\n\n"
-                f"📍 <b>航線：</b>台中 (<code>RMQ</code>) ⇄ 下地島/宮古島 (<code>SHI</code>)\n"
+                f"🎉 <b>【機票價格通知・{airline}】</b>\n\n"
+                f"📍 <b>航線：</b>{dep_name} (<code>{dep}</code>) ⇄ {arr_name} (<code>{arr}</code>)\n"
                 f"📅 <b>日期：</b>{outbound} ⇄ {inbound} ({html.escape(note)})\n\n"
                 f"💵 <b>雙人總價：</b><code>TWD {curr_total:,.0f}</code>{prev_total_str}\n"
                 f"👤 <b>平均每人：</b><code>TWD {curr_pp:,.0f}</code>{prev_pp_str}\n"
@@ -186,17 +257,21 @@ def fetch_starlux_flights_sync() -> List[Dict[str, Any]]:
             results.append({
                 "success": True,
                 "html": card_html,
-                "booking_url": booking_url
+                "booking_url": booking_url,
+                "btn_text": f"✈️ 前往{airline}官網查票/訂位"
             })
 
         except Exception as e:
-            logger.error(f"查詢機票異常 ({outbound}~{inbound}): {e}", exc_info=True)
+            logger.error(f"查詢機票異常 ({dep}->{arr} {outbound}~{inbound}): {e}", exc_info=True)
             results.append({
                 "success": False,
                 "error": str(e),
+                "departure": dep,
+                "arrival": arr,
                 "outbound": outbound,
                 "inbound": inbound,
-                "note": note
+                "note": note,
+                "airline": airline
             })
 
     return results
