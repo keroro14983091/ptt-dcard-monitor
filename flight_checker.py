@@ -9,11 +9,14 @@ import os
 import html
 import logging
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List
 import requests
 
 logger = logging.getLogger("PTTMonitor.FlightChecker")
+
+# 台灣時區 (UTC+8)
+TAIPEI_TZ = timezone(timedelta(hours=8))
 
 # 預設監控設定
 DEFAULT_SERPAPI_KEY = "677373e0cf225645df8d772f91167c48ae3fee661923f0fecd56c45b683519d0"
@@ -117,7 +120,7 @@ def _get_latest_and_lowest_price(route_key: str):
 
 def _save_price(route_key: str, price: float, currency: str = "TWD"):
     with _get_db_conn() as conn:
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now_str = datetime.now(TAIPEI_TZ).strftime("%Y-%m-%d %H:%M:%S")
         conn.execute(
             "INSERT INTO price_history (route_key, price, currency, checked_at) VALUES (?, ?, ?, ?);",
             (route_key, price, currency, now_str)
@@ -239,7 +242,7 @@ def fetch_starlux_flights_sync() -> List[Dict[str, Any]]:
                 lowest_str = f"<code>TWD {lowest_bench:,.0f}</code> <i>(距低點 +{diff_low:,.0f} / +{pct_low:.1f}%)</i>"
 
             booking_url = target_flight.get("booking_url") or official_url
-            now_time = datetime.now().strftime("%Y-%m-%d %H:%M")
+            now_time = datetime.now(TAIPEI_TZ).strftime("%Y-%m-%d %H:%M")
             dep_name = AIRPORT_NAMES.get(dep, dep)
             arr_name = AIRPORT_NAMES.get(arr, arr)
 
