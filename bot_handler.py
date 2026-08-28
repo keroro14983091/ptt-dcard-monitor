@@ -2,7 +2,7 @@ import html
 import functools
 import logging
 from typing import Optional, Dict, Any, List
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     ApplicationBuilder,
@@ -15,6 +15,7 @@ from telegram.request import HTTPXRequest
 from telegram.constants import ParseMode
 from config import config, logger
 import database as db
+import flight_checker
 
 
 def authorized_only(func):
@@ -74,6 +75,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "   👉 顯示所有監控看板的關鍵字與推文數設定\n\n"
         "🔹 <code>狀態</code>\n"
         "   👉 查詢系統運行狀態（運行中 / 暫停中）與推播統計\n\n"
+        "📌 <b>【星宇機票查價】</b>\n"
+        "🔹 <code>機票</code> / <code>查票</code> / <code>/flight</code>\n"
+        "   👉 即時查詢星宇航空（台中 ⇄ 下地島）雙人最新票價與歷史低點\n\n"
         "📌 <b>【監控開關】</b>\n"
         "🔹 <code>停止監控</code> 👉 暫停推播與爬蟲\n"
         "🔹 <code>開始監控</code> 👉 開始/恢復即時監控\n"
@@ -291,9 +295,54 @@ async def handle_del_push_text(update: Update, board: str) -> None:
 # 中文自然語言訊息分流處理器
 # ==========================================
 
+async def handle_flight_check_text(update: Update) -> None:
+    """處理機票即時查詢"""
+    if not update.effective_message:
+        return
+
+    # 先發送正在查詢中提示
+    wait_msg = await update.effective_message.reply_text(
+        "🔍 <b>正在為您即時查詢星宇航空（台中 ⇄ 下地島）雙人最新票價，請稍候約 3~5 秒...</b>",
+        parse_mode=ParseMode.HTML
+    )
+
+    try:
+        import asyncio
+        # 在執行緒中運行同步請求以避免阻塞 asyncio 迴圈
+        results = await asyncio.to_thread(flight_checker.fetch_starlux_flights_sync)
+
+        for res in results:
+            if res.get("success"):
+                btn = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✈️ 前往星宇航空官網查票/訂位", url=res.get("booking_url", "https://www.starlux-airlines.com/zh-TW"))]
+                ])
+                await update.effective_message.reply_text(
+                    res["html"],
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=btn
+                )
+            else:
+                outbound = res.get("outbound", "")
+                inbound = res.get("inbound", "")
+                err = res.get("error", "查詢失敗")
+                await update.effective_message.reply_text(
+                    f"⚠️ <b>【機票查詢提醒】</b>\n\n"
+                    f"📍 航線：台中 (<code>RMQ</code>) ⇄ 下地島 (<code>SHI</code>)\n"
+                    f"📅 日期：{outbound} ⇄ {inbound}\n"
+                    f"❌ 狀態：{html.escape(err)}",
+                    parse_mode=ParseMode.HTML
+                )
+    except Exception as e:
+        logger.error(f"即時查票執行失敗: {e}", exc_info=True)
+        await update.effective_message.reply_text(
+            f"❌ <b>查詢機票時發生異常：</b>\n<code>{html.escape(str(e))}</code>",
+            parse_mode=ParseMode.HTML
+        )
+
+
 @authorized_only
 async def text_message_dispatcher(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """攔截使用者發送的一般中文純文字，進行語意解析與分流"""
+    """純文字自然語言分流處理器"""
     if not update.effective_message or not update.effective_message.text:
         return
 
@@ -304,12 +353,17 @@ async def text_message_dispatcher(update: Update, context: ContextTypes.DEFAULT_
         await help_command(update, context)
         return
 
-    # 2. 清單 / 查詢
+    # 2. 即時查詢星宇機票 (支援中文與斜線指令)
+    if raw_text.lower() in ("機票", "查票", "查機票", "票價", "雙人機票", "/flight", "/check", "flight", "starlux"):
+        await handle_flight_check_text(update)
+        return
+
+    # 3. 清單 / 查詢
     if raw_text in ("清單", "監控清單", "查詢", "關鍵字", "/list"):
         await list_command(update, context)
         return
 
-    # 3. 狀態
+    # 4. 狀態
     if raw_text in ("狀態", "系統狀態", "/status"):
         await status_command(update, context)
         return
