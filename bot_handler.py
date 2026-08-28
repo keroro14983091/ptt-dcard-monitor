@@ -569,7 +569,7 @@ async def send_notification(bot, chat_id: str, post: Dict[str, Any]) -> bool:
             chat_id=chat_id,
             text=text,
             parse_mode=ParseMode.HTML,
-            disable_web_page_preview=False,
+            disable_web_page_preview=True,
         )
         return True
     except Exception as e:
