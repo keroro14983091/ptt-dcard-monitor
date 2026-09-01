@@ -40,7 +40,7 @@ async def monitor_crawler_loop(bot_holder: dict):
             kws = rule.get("keywords", [])
             ex_kws = rule.get("exclude_keywords", [])
             min_push = rule.get("min_push_count", 0)
-            posts = await asyncio.to_thread(ptt_crawler.fetch_board_posts, board, pages=1, ignore_pinned=True)
+            posts = await asyncio.to_thread(ptt_crawler.fetch_board_posts, board, pages=config.ptt_crawl_pages, ignore_pinned=True)
             matched_posts = ptt_crawler.filter_matching_posts(
                 posts, kws, exclude_keywords=ex_kws, min_push_count=min_push
             )
@@ -92,8 +92,8 @@ async def monitor_crawler_loop(bot_holder: dict):
                 min_push = rule.get("min_push_count", 0)
 
                 try:
-                    logger.debug(f"[PTT] 正在抓取看板: {board} (包含詞數: {len(kws)}, 排除詞數: {len(ex_kws)}, 門檻: {min_push})")
-                    posts = await asyncio.to_thread(ptt_crawler.fetch_board_posts, board, pages=1, ignore_pinned=True)
+                    logger.debug(f"[PTT] 正在抓取看板: {board} (包含詞數: {len(kws)}, 排除詞數: {len(ex_kws)}, 門檻: {min_push}, 頁數: {config.ptt_crawl_pages})")
+                    posts = await asyncio.to_thread(ptt_crawler.fetch_board_posts, board, pages=config.ptt_crawl_pages, ignore_pinned=True)
                     matched_posts = ptt_crawler.filter_matching_posts(
                         posts, kws, exclude_keywords=ex_kws, min_push_count=min_push
                     )

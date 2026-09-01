@@ -32,6 +32,7 @@ class Config:
     poll_interval_max_sec: int
     db_path: str
     log_level: str
+    ptt_crawl_pages: int = 5
     dcard_cookie: str = ""
     dcard_proxy_url: str = ""
     telegram_proxy_url: str = ""
@@ -71,6 +72,8 @@ class Config:
         ptt_min_push = int(os.getenv("PTT_MIN_PUSH_COUNT", "50"))
         dcard_min_like = int(os.getenv("DCARD_MIN_LIKE_COUNT", "50"))
 
+        ptt_crawl_pages = int(os.getenv("PTT_CRAWL_PAGES", "5"))
+
         poll_min = int(os.getenv("POLL_INTERVAL_MIN_SEC", "30"))
         poll_max = int(os.getenv("POLL_INTERVAL_MAX_SEC", "60"))
 
@@ -93,6 +96,7 @@ class Config:
             default_keywords=default_keywords,
             ptt_min_push_count=ptt_min_push,
             dcard_min_like_count=dcard_min_like,
+            ptt_crawl_pages=ptt_crawl_pages,
             poll_interval_min_sec=poll_min,
             poll_interval_max_sec=poll_max,
             db_path=db_path,

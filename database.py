@@ -160,7 +160,7 @@ def init_db(db_path: Optional[str] = None) -> None:
             default_rules = [
                 ("Stock", ["群聯", "宜鼎", "創新服務", "漢唐"], 50),
                 ("Lifeismoney", ["機票", "航空", "住宿", "旅行", "chatgpt", "gemini", "codex", "蝦皮", "電影"], 50),
-                ("Gossiping", [], 80),
+                ("Gossiping", [], 99),
             ]
             for b_name, kws, push_th in default_rules:
                 for kw in kws:
@@ -290,6 +290,17 @@ def delete_board_exclude_keyword(board: str, keyword: str, db_path: Optional[str
             if cursor.rowcount > 0:
                 deleted.append(kw)
     return deleted
+
+
+def get_board_keywords(board: str, db_path: Optional[str] = None) -> List[str]:
+    """獲取指定看板的關鍵字清單"""
+    b_name = canonicalize_board_name(board)
+    with get_db_cursor(db_path) as cursor:
+        cursor.execute(
+            "SELECT keyword FROM board_keywords WHERE board = ? ORDER BY created_at ASC;",
+            (b_name,),
+        )
+        return [row["keyword"] for row in cursor.fetchall()]
 
 
 def get_board_exclude_keywords(board: str, db_path: Optional[str] = None) -> List[str]:

@@ -22,10 +22,12 @@ class TestMonitorSystem(unittest.TestCase):
                 pass
 
     def test_board_keywords_crud(self):
-        # 1. 預設規則檢查 (Stock 應有 群聯)
+        # 1. 預設規則檢查 (Stock 應有 群聯, Gossiping 門檻應為 99)
         cfg = db.get_all_monitored_boards_config(self.temp_db_path)
         self.assertIn("Stock", cfg)
         self.assertIn("群聯", cfg["Stock"]["keywords"])
+        self.assertIn("Gossiping", cfg)
+        self.assertEqual(cfg["Gossiping"]["min_push_count"], 99)
 
         # 2. 新增看板關鍵字
         added = db.add_board_keyword("C_Chat", "咒術迴戰,芙莉蓮", self.temp_db_path)
