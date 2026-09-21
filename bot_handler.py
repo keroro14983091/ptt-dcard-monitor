@@ -93,6 +93,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "📌 <b>【星宇機票查價】</b>\n"
         "🔹 <code>機票</code> / <code>查票</code> / <code>/flight</code>\n"
         "   👉 即時查詢星宇航空（台中 ⇄ 下地島）雙人最新票價與歷史低點\n\n"
+        "📌 <b>【推播測試】</b>\n"
+        "🔹 <code>測試</code> / <code>測試推播</code> / <code>/test</code>\n"
+        "   👉 立即發送一則模擬推播通知卡片到手機，驗證推播管道暢通\n\n"
         "📌 <b>【監控開關】</b>\n"
         "🔹 <code>停止監控</code> 👉 暫停推播與爬蟲\n"
         "🔹 <code>開始監控</code> 👉 開始/恢復即時監控\n"
@@ -187,14 +190,18 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     diag_section = ("\n" + "\n".join(crawler_diag) + "\n━━━━━━━━━━━━━━━━━━━━") if crawler_diag else ""
 
-    # 最新推播文章
+    # 最新推播文章或啟動基準
     last_post = stats.get("last_notified")
     last_post_text = ""
     if last_post:
         lp_title = html.escape(str(last_post.get("title", "")))
         lp_board = html.escape(str(last_post.get("board", "")))
         lp_time = html.escape(str(last_post.get("created_at", "")))
-        last_post_text = f"\n📢 <b>最新推播：</b> [{lp_board}] {lp_title}\n   <i>({lp_time})</i>\n━━━━━━━━━━━━━━━━━━━━"
+        is_warmup = last_post.get("is_warmup", False)
+        if is_warmup:
+            last_post_text = f"\n📢 <b>啟動基準文章：</b> [{lp_board}] {lp_title}\n   <i>({lp_time} 啟動預熱已登記，防歷史舊文洗版；新發布文章即會即時推播)</i>\n━━━━━━━━━━━━━━━━━━━━"
+        else:
+            last_post_text = f"\n📢 <b>最新推播：</b> [{lp_board}] {lp_title}\n   <i>({lp_time})</i>\n━━━━━━━━━━━━━━━━━━━━"
 
     msg = (
         "📊 <b>系統運作狀態回報</b>\n"
@@ -211,6 +218,19 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     )
     if update.effective_message:
         await update.effective_message.reply_text(msg, parse_mode=ParseMode.HTML)
+
+
+@authorized_only
+async def test_notification_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """處理 測試 / 測試推播 / /test：發送模擬推播卡片驗證通知通道"""
+    test_post = {
+        "platform": "PTT",
+        "board": "Stock",
+        "title": "[測試] 系統連線與推播功能運作正常！",
+        "reason": "手動觸發測試 / 關鍵字推播管道暢通",
+        "url": "https://www.ptt.cc/bbs/Stock/index.html",
+    }
+    await broadcast_notification(context.bot, test_post)
 
 
 @authorized_only
@@ -477,6 +497,11 @@ async def text_message_dispatcher(update: Update, context: ContextTypes.DEFAULT_
         await status_command(update, context)
         return
 
+    # 4.1 測試推播
+    if raw_text.lower() in ("測試", "測試推播", "測試通知", "test", "/test"):
+        await test_notification_command(update, context)
+        return
+
     # 5. 停止監控 / 暫停
     if raw_text in ("停止監控", "暫停監控", "暫停", "/pause"):
         await pause_command(update, context)
@@ -660,6 +685,7 @@ def create_bot_application() -> Application:
     app.add_handler(CommandHandler(["start", "help"], help_command))
     app.add_handler(CommandHandler("list", list_command))
     app.add_handler(CommandHandler("status", status_command))
+    app.add_handler(CommandHandler("test", test_notification_command))
     app.add_handler(CommandHandler("pause", pause_command))
     app.add_handler(CommandHandler("resume", resume_command))
 

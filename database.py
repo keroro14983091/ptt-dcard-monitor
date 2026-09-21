@@ -419,7 +419,7 @@ def mark_post_notified(
 
 
 def get_last_notified_post(db_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
-    """獲取最新一筆成功推播的文章資訊"""
+    """獲取最新一筆成功推播或預熱登記的文章資訊"""
     with get_db_cursor(db_path) as cursor:
         cursor.execute(
             """
@@ -430,12 +430,15 @@ def get_last_notified_post(db_path: Optional[str] = None) -> Optional[Dict[str, 
         )
         row = cursor.fetchone()
         if row:
+            reason_str = str(row["reason"] or "")
+            is_warmup = "[啟動基準]" in reason_str
             return {
                 "platform": row["platform"],
                 "board": row["board"],
                 "title": row["title"],
                 "url": row["url"],
                 "reason": row["reason"],
+                "is_warmup": is_warmup,
                 "created_at": row["created_at"],
             }
         return None

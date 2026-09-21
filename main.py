@@ -65,7 +65,7 @@ async def monitor_crawler_loop(bot_holder: dict):
                         title=post["title"],
                         url=post["url"],
                         board=post["board"],
-                        reason=post["reason"],
+                        reason=f"[啟動基準] {post['reason']}",
                     )
         logger.info("✅ 啟動基準建立完成！即刻起僅監控與推播「從現在起新發布/新達標」之文章。")
     except Exception as e:
