@@ -37,6 +37,7 @@ class Config:
     dcard_proxy_url: str = ""
     telegram_proxy_url: str = ""
     ptt_proxy_url: str = ""
+    ptt_base_url: str = "https://www.ptt.cc"
     port: int = 10000
     enable_web_server: bool = True
 
@@ -85,6 +86,9 @@ class Config:
         dcard_proxy_url = os.getenv("DCARD_PROXY_URL", "").strip()
         telegram_proxy_url = os.getenv("TELEGRAM_PROXY_URL", "").strip()
         ptt_proxy_url = os.getenv("PTT_PROXY_URL", "").strip()
+        ptt_base_url = os.getenv("PTT_BASE_URL", "https://www.ptt.cc").strip().rstrip("/")
+        if not ptt_base_url:
+            ptt_base_url = "https://www.ptt.cc"
 
         port = int(os.getenv("PORT", "10000"))
         enable_web_server = os.getenv("ENABLE_WEB_SERVER", "true").lower() in ("true", "1", "yes")
@@ -107,6 +111,7 @@ class Config:
             dcard_proxy_url=dcard_proxy_url,
             telegram_proxy_url=telegram_proxy_url,
             ptt_proxy_url=ptt_proxy_url,
+            ptt_base_url=ptt_base_url,
             port=port,
             enable_web_server=enable_web_server,
         )

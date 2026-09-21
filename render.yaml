@@ -33,3 +33,5 @@ services:
         value: ./data/monitor.db
       - key: LOG_LEVEL
         value: INFO
+      - key: PTT_BASE_URL
+        value: https://www.ptt.cc

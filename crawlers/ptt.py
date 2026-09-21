@@ -36,7 +36,11 @@ class PTTCrawler:
     }
     COOKIES = {"over18": "1"}
 
-    def __init__(self, session: Optional[Any] = None, proxy_url: Optional[str] = None):
+    def __init__(self, session: Optional[Any] = None, proxy_url: Optional[str] = None, base_url: Optional[str] = None):
+        self.base_url = (base_url or getattr(config, "ptt_base_url", "https://www.ptt.cc")).strip().rstrip("/")
+        if not self.base_url:
+            self.base_url = "https://www.ptt.cc"
+
         self.use_curl_cffi = HAS_CURL_CFFI and (session is None)
         proxy = proxy_url or getattr(config, "ptt_proxy_url", "")
 
@@ -77,7 +81,7 @@ class PTTCrawler:
         ignore_pinned: 是否過濾置底公告文章（預設 True，過濾 PTT 永久置底公告）
         """
         posts = []
-        url = f"{self.BASE_URL}/bbs/{board}/index.html"
+        url = f"{self.base_url}/bbs/{board}/index.html"
         last_http_code = None
         error_msg = None
         pages_crawled = 0
@@ -120,7 +124,7 @@ class PTTCrawler:
                 # 取得上一頁連結
                 prev_link = soup.select_one("div.btn-group-paging a:nth-child(2)")
                 if prev_link and prev_link.get("href"):
-                    url = self.BASE_URL + prev_link["href"]
+                    url = self.base_url + prev_link["href"]
                 else:
                     url = None
 
@@ -151,7 +155,7 @@ class PTTCrawler:
 
         title = title_tag.get_text(strip=True)
         href = title_tag["href"].strip()
-        url = self.BASE_URL + href
+        url = f"https://www.ptt.cc{href}" if href.startswith("/") else f"https://www.ptt.cc/{href}"
 
         # 從 URL 擷取 post_id，例如 /bbs/Stock/M.1724567890.A.123.html -> M.1724567890.A.123
         match = re.search(r"/(M\.\d+\.A\.[0-9A-F]+)\.html", href)
