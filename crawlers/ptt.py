@@ -7,6 +7,15 @@ from bs4 import BeautifulSoup
 from typing import List, Dict, Any, Optional
 from config import config, logger
 
+# 嘗試導入具備真實瀏覽器 TLS/JA3 指紋偽裝的 curl_cffi 函式庫以突破 Cloudflare 阻擋
+try:
+    from curl_cffi import requests as cffi_requests
+    from curl_cffi.requests import Session as CffiSession
+    HAS_CURL_CFFI = True
+except ImportError:
+    HAS_CURL_CFFI = False
+    CffiSession = None
+
 
 class PTTCrawler:
     """PTT 看板爬蟲：支援 over18 年齡驗證、關鍵字匹配與推文數/爆文過濾，具備防 Cloudflare 阻擋與即時診斷追蹤"""
@@ -27,15 +36,28 @@ class PTTCrawler:
     }
     COOKIES = {"over18": "1"}
 
-    def __init__(self, session: Optional[requests.Session] = None, proxy_url: Optional[str] = None):
-        self.session = session or requests.Session()
-        self.session.headers.update(self.HEADERS)
-        self.session.cookies.update(self.COOKIES)
-
+    def __init__(self, session: Optional[Any] = None, proxy_url: Optional[str] = None):
+        self.use_curl_cffi = HAS_CURL_CFFI and (session is None)
         proxy = proxy_url or getattr(config, "ptt_proxy_url", "")
-        if proxy:
-            self.session.proxies = {"http": proxy, "https": proxy}
-            logger.info(f"[PTT] 爬蟲已配置代理伺服器: {proxy}")
+
+        if self.use_curl_cffi:
+            # 採用 Chrome 124 TLS 指紋與 HTTP/2 握手，突破 Cloudflare 403 阻擋
+            self.session = CffiSession(impersonate="chrome124")
+            self.session.headers.update(self.HEADERS)
+            self.session.cookies.set("over18", "1", domain=".ptt.cc")
+            if proxy:
+                self.session.proxies = {"http": proxy, "https": proxy}
+                logger.info(f"[PTT] curl_cffi 爬蟲已配置代理: {proxy}")
+            logger.info("[PTT] 爬蟲已啟用 curl_cffi (Chrome 124 TLS 偽裝) 模式，以突破 Cloudflare 防護")
+        else:
+            self.session = session or requests.Session()
+            self.session.headers.update(self.HEADERS)
+            self.session.cookies.update(self.COOKIES)
+            if proxy:
+                self.session.proxies = {"http": proxy, "https": proxy}
+                logger.info(f"[PTT] requests 爬蟲已配置代理: {proxy}")
+            if not HAS_CURL_CFFI:
+                logger.info("[PTT] 使用標準 requests 模式")
 
         # 記錄各看板最新一次爬取診斷資訊
         self.board_status: Dict[str, Dict[str, Any]] = {}
@@ -74,8 +96,11 @@ class PTTCrawler:
                 pages_crawled += 1
 
                 if resp.status_code != 200:
-                    error_msg = f"HTTP {resp.status_code}"
-                    logger.warning(f"[PTT] 抓取看板 {board} 失敗，HTTP 代碼: {resp.status_code}")
+                    server = resp.headers.get("server", "")
+                    title_match = re.search(r"<title>(.*?)</title>", resp.text, re.IGNORECASE)
+                    title_snip = title_match.group(1).strip() if title_match else resp.text[:60].replace("\n", " ").strip()
+                    error_msg = f"HTTP {resp.status_code} [{server}]: {title_snip}" if server else f"HTTP {resp.status_code}"
+                    logger.warning(f"[PTT] 抓取看板 {board} 失敗，{error_msg}")
                     break
 
                 soup = BeautifulSoup(resp.text, "html.parser")
@@ -99,21 +124,19 @@ class PTTCrawler:
                 else:
                     url = None
 
-            except requests.RequestException as e:
-                error_msg = f"連線異常: {e}"
-                logger.error(f"[PTT] 請求看板 {board} 時發生網路異常: {e}")
-                break
             except Exception as e:
-                error_msg = f"解析異常: {e}"
-                logger.error(f"[PTT] 解析看板 {board} 發生未知異常: {e}", exc_info=True)
+                error_msg = f"連線異常: {e}"
+                logger.error(f"[PTT] 請求看板 {board} 時發生異常: {e}")
                 break
 
         # 更新該看板即時診斷數據
+        engine_tag = "curl_cffi" if getattr(self, "use_curl_cffi", False) else "requests"
         self.board_status[board] = {
             "status_code": last_http_code,
             "posts_count": len(posts),
             "pages_crawled": pages_crawled,
             "error": error_msg,
+            "engine": engine_tag,
             "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
 
