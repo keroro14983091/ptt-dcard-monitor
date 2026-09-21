@@ -146,5 +146,37 @@ class TestMonitorSystem(unittest.TestCase):
         self.assertIn("href=\"https://www.ptt.cc/bbs/Stock/test.html\"", formatted)
 
 
+    def test_diagnostic_status_and_last_notified(self):
+        # 1. 測試 mark_post_notified 與 get_last_notified_post
+        self.assertIsNone(db.get_last_notified_post(self.temp_db_path))
+        
+        db.mark_post_notified(
+            platform="PTT",
+            post_id="ptt_Stock_M123",
+            title="台積電法說會大漲",
+            url="https://www.ptt.cc/bbs/Stock/M123.html",
+            board="Stock",
+            reason="符合關鍵字 [台積電]",
+            db_path=self.temp_db_path,
+        )
+        
+        last = db.get_last_notified_post(self.temp_db_path)
+        self.assertIsNotNone(last)
+        self.assertEqual(last["title"], "台積電法說會大漲")
+        self.assertEqual(last["board"], "Stock")
+        
+        stats = db.get_stats(self.temp_db_path)
+        self.assertIn("last_notified", stats)
+        self.assertEqual(stats["last_notified"]["title"], "台積電法說會大漲")
+
+        # 2. 測試 PTTCrawler 診斷狀態結構
+        crawler = PTTCrawler()
+        self.assertIn("Sec-Ch-Ua", crawler.session.headers)
+        self.assertIn("board_status", dir(crawler))
+        status = crawler.get_board_status()
+        self.assertIsInstance(status, dict)
+
+
 if __name__ == "__main__":
     unittest.main()
+

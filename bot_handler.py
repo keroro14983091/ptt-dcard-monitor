@@ -17,6 +17,14 @@ from config import config, logger
 import database as db
 import flight_checker
 
+_crawler_status_getter = None
+
+
+def set_crawler_status_getter(fn):
+    """設定爬蟲即時狀態獲取函式"""
+    global _crawler_status_getter
+    _crawler_status_getter = fn
+
 
 def authorized_only(func):
     """驗證操作者是否具備管理員權限的裝飾器"""
@@ -153,6 +161,41 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     state_text = "⏸️ <b>已暫停監控</b>（不會發送推播）" if is_paused else "🟢 <b>監控中（正常運作）</b>"
 
+    # 取得最新 PTT 爬蟲即時連線診斷資訊
+    crawler_diag = []
+    if _crawler_status_getter:
+        try:
+            status_data = _crawler_status_getter()
+            boards_diag = status_data.get("boards", {})
+            last_crawl = status_data.get("last_crawl_time")
+            if last_crawl:
+                crawler_diag.append(f"⏱️ <b>最新掃描時間：</b> {html.escape(str(last_crawl))}")
+            if boards_diag:
+                diag_items = []
+                for b_name, b_info in boards_diag.items():
+                    code = b_info.get("status_code")
+                    count = b_info.get("posts_count", 0)
+                    if code == 200:
+                        diag_items.append(f"<code>{html.escape(b_name)}</code>: 🟢 200 正常 (最新 {count} 篇)")
+                    elif code:
+                        diag_items.append(f"<code>{html.escape(b_name)}</code>: ⚠️ HTTP {code} 遭阻擋")
+                    else:
+                        diag_items.append(f"<code>{html.escape(b_name)}</code>: ⏳ 尚未連線")
+                crawler_diag.append("📡 <b>PTT 看板連線診斷：</b>\n   " + "\n   ".join(diag_items))
+        except Exception:
+            pass
+
+    diag_section = ("\n" + "\n".join(crawler_diag) + "\n━━━━━━━━━━━━━━━━━━━━") if crawler_diag else ""
+
+    # 最新推播文章
+    last_post = stats.get("last_notified")
+    last_post_text = ""
+    if last_post:
+        lp_title = html.escape(str(last_post.get("title", "")))
+        lp_board = html.escape(str(last_post.get("board", "")))
+        lp_time = html.escape(str(last_post.get("created_at", "")))
+        last_post_text = f"\n📢 <b>最新推播：</b> [{lp_board}] {lp_title}\n   <i>({lp_time})</i>\n━━━━━━━━━━━━━━━━━━━━"
+
     msg = (
         "📊 <b>系統運作狀態回報</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
@@ -161,8 +204,9 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         f"🏷️ <b>總監控看板數：</b> {stats['monitored_boards_count']} 個\n"
         f"🎯 <b>總關鍵字設定數：</b> {stats['total_keywords_count']} 組\n"
         f"📬 <b>歷史推播總數：</b> {stats['total_notified_posts']} 篇\n"
-        f"⏱️ <b>輪詢間隔：</b> {config.poll_interval_min_sec} ~ {config.poll_interval_max_sec} 秒\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"⏱️ <b>輪詢間隔：</b> {config.poll_interval_min_sec} ~ {config.poll_interval_max_sec} 秒"
+        f"{diag_section}"
+        f"{last_post_text}\n"
         "💡 <i>發送「清單」可查看各看板詳細設定規則</i>"
     )
     if update.effective_message:

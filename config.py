@@ -32,10 +32,11 @@ class Config:
     poll_interval_max_sec: int
     db_path: str
     log_level: str
-    ptt_crawl_pages: int = 5
+    ptt_crawl_pages: int = 3
     dcard_cookie: str = ""
     dcard_proxy_url: str = ""
     telegram_proxy_url: str = ""
+    ptt_proxy_url: str = ""
     port: int = 10000
     enable_web_server: bool = True
 
@@ -72,10 +73,10 @@ class Config:
         ptt_min_push = int(os.getenv("PTT_MIN_PUSH_COUNT", "50"))
         dcard_min_like = int(os.getenv("DCARD_MIN_LIKE_COUNT", "50"))
 
-        ptt_crawl_pages = int(os.getenv("PTT_CRAWL_PAGES", "5"))
+        ptt_crawl_pages = int(os.getenv("PTT_CRAWL_PAGES", "3"))
 
-        poll_min = int(os.getenv("POLL_INTERVAL_MIN_SEC", "30"))
-        poll_max = int(os.getenv("POLL_INTERVAL_MAX_SEC", "60"))
+        poll_min = int(os.getenv("POLL_INTERVAL_MIN_SEC", "60"))
+        poll_max = int(os.getenv("POLL_INTERVAL_MAX_SEC", "120"))
 
         db_path = os.getenv("DB_PATH", "./data/monitor.db").strip()
         log_level = os.getenv("LOG_LEVEL", "INFO").strip().upper()
@@ -83,6 +84,7 @@ class Config:
         dcard_cookie = os.getenv("DCARD_COOKIE", "").strip()
         dcard_proxy_url = os.getenv("DCARD_PROXY_URL", "").strip()
         telegram_proxy_url = os.getenv("TELEGRAM_PROXY_URL", "").strip()
+        ptt_proxy_url = os.getenv("PTT_PROXY_URL", "").strip()
 
         port = int(os.getenv("PORT", "10000"))
         enable_web_server = os.getenv("ENABLE_WEB_SERVER", "true").lower() in ("true", "1", "yes")
@@ -104,6 +106,7 @@ class Config:
             dcard_cookie=dcard_cookie,
             dcard_proxy_url=dcard_proxy_url,
             telegram_proxy_url=telegram_proxy_url,
+            ptt_proxy_url=ptt_proxy_url,
             port=port,
             enable_web_server=enable_web_server,
         )

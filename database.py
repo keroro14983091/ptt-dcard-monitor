@@ -418,6 +418,29 @@ def mark_post_notified(
         return True
 
 
+def get_last_notified_post(db_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """獲取最新一筆成功推播的文章資訊"""
+    with get_db_cursor(db_path) as cursor:
+        cursor.execute(
+            """
+            SELECT platform, board, title, url, reason, created_at
+            FROM notified_posts
+            ORDER BY created_at DESC, rowid DESC LIMIT 1;
+            """
+        )
+        row = cursor.fetchone()
+        if row:
+            return {
+                "platform": row["platform"],
+                "board": row["board"],
+                "title": row["title"],
+                "url": row["url"],
+                "reason": row["reason"],
+                "created_at": row["created_at"],
+            }
+        return None
+
+
 def get_stats(db_path: Optional[str] = None) -> Dict[str, Any]:
     """獲取詳細統計資訊"""
     with get_db_cursor(db_path) as cursor:
@@ -432,6 +455,7 @@ def get_stats(db_path: Optional[str] = None) -> Dict[str, Any]:
         is_paused = (row is not None and row["value"] == "1")
 
         all_cfg = get_all_monitored_boards_config(db_path)
+        last_notified = get_last_notified_post(db_path)
 
         return {
             "is_paused": is_paused,
@@ -439,6 +463,7 @@ def get_stats(db_path: Optional[str] = None) -> Dict[str, Any]:
             "monitored_boards": list(all_cfg.keys()),
             "total_keywords_count": kw_count,
             "total_notified_posts": post_count,
+            "last_notified": last_notified,
         }
 
 

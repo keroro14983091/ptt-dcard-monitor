@@ -24,11 +24,11 @@ services:
       - key: DCARD_MIN_LIKE_COUNT
         value: 50
       - key: POLL_INTERVAL_MIN_SEC
-        value: 30
-      - key: POLL_INTERVAL_MAX_SEC
         value: 60
+      - key: POLL_INTERVAL_MAX_SEC
+        value: 120
       - key: PTT_CRAWL_PAGES
-        value: 5
+        value: 3
       - key: DB_PATH
         value: ./data/monitor.db
       - key: LOG_LEVEL

@@ -8,12 +8,25 @@ from typing import List, Dict, Any
 
 from config import config, logger
 import database as db
+import bot_handler
 from bot_handler import create_bot_application, broadcast_notification
 from crawlers.ptt import PTTCrawler
 
 # 全域控制變數
 is_running = True
 start_time = time.time()
+
+# 全域爬蟲連線診斷狀態字典
+crawler_runtime_status: Dict[str, Any] = {
+    "last_crawl_time": None,
+    "boards": {},
+    "last_error": None,
+}
+
+
+def get_crawler_runtime_status() -> Dict[str, Any]:
+    """獲取爬蟲即時連線診斷狀態"""
+    return crawler_runtime_status
 
 
 async def monitor_crawler_loop(bot_holder: dict):
@@ -81,6 +94,7 @@ async def monitor_crawler_loop(bot_holder: dict):
                 continue
 
             logger.info(f"🔄 開始新一輪爬取檢查... (監控看板數: {len(boards_config)}，看板: {', '.join(boards_config.keys())})")
+            crawler_runtime_status["last_crawl_time"] = time.strftime("%Y-%m-%d %H:%M:%S")
             bot = bot_holder.get("bot")
 
             # 依序爬取並過濾各看板
@@ -94,6 +108,7 @@ async def monitor_crawler_loop(bot_holder: dict):
                 try:
                     logger.debug(f"[PTT] 正在抓取看板: {board} (包含詞數: {len(kws)}, 排除詞數: {len(ex_kws)}, 門檻: {min_push}, 頁數: {config.ptt_crawl_pages})")
                     posts = await asyncio.to_thread(ptt_crawler.fetch_board_posts, board, pages=config.ptt_crawl_pages, ignore_pinned=True)
+                    crawler_runtime_status["boards"] = ptt_crawler.get_board_status()
                     matched_posts = ptt_crawler.filter_matching_posts(
                         posts, kws, exclude_keywords=ex_kws, min_push_count=min_push
                     )
@@ -121,8 +136,10 @@ async def monitor_crawler_loop(bot_holder: dict):
                                 logger.info(f"[命中但未推播(Bot未連線)] {post['title']}")
                             await asyncio.sleep(0.5)
 
-                    await asyncio.sleep(1.0)
+                    # 看板之間增加 1.0 ~ 2.0 秒微延遲，避免短時間高頻突發請求觸發站方阻擋
+                    await asyncio.sleep(random.uniform(1.0, 2.0))
                 except Exception as e:
+                    crawler_runtime_status["last_error"] = str(e)
                     logger.error(f"[PTT] 處理看板 {board} 時發生異常: {e}")
 
             # 計算隨機休眠時間
@@ -179,7 +196,7 @@ async def handle_http_health_request(reader: asyncio.StreamReader, writer: async
         try:
             stats = db.get_stats()
         except Exception:
-            stats = {"is_paused": False, "monitored_boards_count": 0, "total_keywords_count": 0, "total_notified_posts": 0}
+            stats = {"is_paused": False, "monitored_boards_count": 0, "total_keywords_count": 0, "total_notified_posts": 0, "last_notified": None}
 
         payload = {
             "status": "healthy",
@@ -190,6 +207,14 @@ async def handle_http_health_request(reader: asyncio.StreamReader, writer: async
             "monitored_boards": stats.get("monitored_boards", []),
             "total_keywords_count": stats["total_keywords_count"],
             "total_notified_posts": stats["total_notified_posts"],
+            "last_notified_post": stats.get("last_notified"),
+            "last_crawl_time": crawler_runtime_status.get("last_crawl_time"),
+            "ptt_boards_status": crawler_runtime_status.get("boards", {}),
+            "settings": {
+                "poll_interval_sec": f"{config.poll_interval_min_sec} ~ {config.poll_interval_max_sec}",
+                "ptt_crawl_pages": config.ptt_crawl_pages,
+                "has_proxy": bool(config.ptt_proxy_url),
+            },
         }
         body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
 
@@ -238,11 +263,14 @@ async def main():
     # 1. 初始化 SQLite 資料庫
     db.init_db()
 
-    # 2. 建立 Telegram Bot Application
+    # 2. 註冊即時診斷回調至 bot_handler
+    bot_handler.set_crawler_status_getter(get_crawler_runtime_status)
+
+    # 3. 建立 Telegram Bot Application
     bot_app = create_bot_application()
     bot_holder = {"bot": None}
 
-    # 3. 同時啟動 Bot 連線任務、爬蟲排程工作、以及 Web 健康檢查伺服器
+    # 4. 同時啟動 Bot 連線任務、爬蟲排程工作、以及 Web 健康檢查伺服器
     tasks = []
     bot_task = asyncio.create_task(start_telegram_bot(bot_app, bot_holder))
     crawler_task = asyncio.create_task(monitor_crawler_loop(bot_holder))

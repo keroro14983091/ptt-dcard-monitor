@@ -1,4 +1,7 @@
 import re
+import time
+import random
+from datetime import datetime
 import requests
 from bs4 import BeautifulSoup
 from typing import List, Dict, Any, Optional
@@ -6,19 +9,42 @@ from config import config, logger
 
 
 class PTTCrawler:
-    """PTT 看板爬蟲：支援 over18 年齡驗證、關鍵字匹配與推文數/爆文過濾"""
+    """PTT 看板爬蟲：支援 over18 年齡驗證、關鍵字匹配與推文數/爆文過濾，具備防 Cloudflare 阻擋與即時診斷追蹤"""
 
     BASE_URL = "https://www.ptt.cc"
     HEADERS = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
         "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Sec-Ch-Ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "same-origin",
+        "Sec-Fetch-User": "?1",
+        "Upgrade-Insecure-Requests": "1",
     }
     COOKIES = {"over18": "1"}
 
-    def __init__(self, session: Optional[requests.Session] = None):
+    def __init__(self, session: Optional[requests.Session] = None, proxy_url: Optional[str] = None):
         self.session = session or requests.Session()
         self.session.headers.update(self.HEADERS)
         self.session.cookies.update(self.COOKIES)
+
+        proxy = proxy_url or getattr(config, "ptt_proxy_url", "")
+        if proxy:
+            self.session.proxies = {"http": proxy, "https": proxy}
+            logger.info(f"[PTT] 爬蟲已配置代理伺服器: {proxy}")
+
+        # 記錄各看板最新一次爬取診斷資訊
+        self.board_status: Dict[str, Dict[str, Any]] = {}
+
+    def get_board_status(self, board: Optional[str] = None) -> Dict[str, Any]:
+        """獲取各看板或特定看板的最新連線診斷狀態"""
+        if board:
+            return self.board_status.get(board, {})
+        return dict(self.board_status)
 
     def fetch_board_posts(
         self, board: str, pages: int = 1, ignore_pinned: bool = True
@@ -30,13 +56,25 @@ class PTTCrawler:
         """
         posts = []
         url = f"{self.BASE_URL}/bbs/{board}/index.html"
+        last_http_code = None
+        error_msg = None
+        pages_crawled = 0
 
         for page_idx in range(pages):
             if not url:
                 break
+
+            # 若抓取多頁，在換頁時加入 0.8 ~ 1.5 秒微延遲，避免短時間高頻突發請求觸發 Cloudflare 阻擋
+            if page_idx > 0:
+                time.sleep(random.uniform(0.8, 1.5))
+
             try:
                 resp = self.session.get(url, timeout=10.0)
+                last_http_code = resp.status_code
+                pages_crawled += 1
+
                 if resp.status_code != 200:
+                    error_msg = f"HTTP {resp.status_code}"
                     logger.warning(f"[PTT] 抓取看板 {board} 失敗，HTTP 代碼: {resp.status_code}")
                     break
 
@@ -62,11 +100,22 @@ class PTTCrawler:
                     url = None
 
             except requests.RequestException as e:
+                error_msg = f"連線異常: {e}"
                 logger.error(f"[PTT] 請求看板 {board} 時發生網路異常: {e}")
                 break
             except Exception as e:
+                error_msg = f"解析異常: {e}"
                 logger.error(f"[PTT] 解析看板 {board} 發生未知異常: {e}", exc_info=True)
                 break
+
+        # 更新該看板即時診斷數據
+        self.board_status[board] = {
+            "status_code": last_http_code,
+            "posts_count": len(posts),
+            "pages_crawled": pages_crawled,
+            "error": error_msg,
+            "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
 
         return posts
 
